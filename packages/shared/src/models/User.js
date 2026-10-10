@@ -15,8 +15,17 @@ const userSchema = new mongoose.Schema({
       enum: Object.values(DIALOG_STEP),
       default: DIALOG_STEP.IDLE,
     },
-    photoId: { type: mongoose.Schema.Types.ObjectId, default: null },
-    presetCode: { type: String, default: null },
+    // Загруженное фото клиента между шагами «фото → выбор стиля».
+    // В ТЗ 8.1 заявлен photoId (ObjectId); реализация хранит снимок метаданных
+    // файла напрямую — отдельная коллекция photos для v1 не нужна.
+    photo: {
+      storagePath: { type: String, default: null },
+      tgFileId: { type: String, default: null },
+      mime: { type: String, default: null },
+      bytes: { type: Number, default: 0 },
+      width: { type: Number, default: null },
+      height: { type: Number, default: null },
+    },
   },
   generationsTotal: { type: Number, default: 0 },
   dataDeletedAt: { type: Date, default: null },

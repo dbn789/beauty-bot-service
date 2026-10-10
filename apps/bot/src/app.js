@@ -1,8 +1,8 @@
-// express-приложение Internal API бота (ТЗ 9.1): health + (с Э1) маршруты для админки.
+// express-приложение Internal API бота (ТЗ 9.1): health + (с Э4) маршруты для админки.
 const express = require('express');
 const { version } = require('../package.json');
 
-const createApp = ({ logger, dbState = () => 'unknown' } = {}) => {
+const createApp = ({ logger, dbState = () => 'unknown', provider = null } = {}) => {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
@@ -13,6 +13,7 @@ const createApp = ({ logger, dbState = () => 'unknown' } = {}) => {
       app: 'beauty-bot',
       version,
       db: dbState(),
+      provider,
       ts: new Date().toISOString(),
     });
   });

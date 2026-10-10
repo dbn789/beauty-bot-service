@@ -18,6 +18,7 @@ const DIALOG_STEP = Object.freeze({
   IDLE: 'idle',
   AWAIT_PHOTO: 'await_photo',
   AWAIT_CHOICE: 'await_choice',
+  AWAIT_TEXT: 'await_text',
   PROCESSING: 'processing',
 });
 
