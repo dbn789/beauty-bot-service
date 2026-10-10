@@ -28,10 +28,10 @@ let tmpDir;
 
 const noise = (x, y) => [(x * 7) % 256, (y * 13) % 256, (x * y + 11) % 256];
 
-// «Платный» провайдер с ценами bfl/flux.2-flex (0.03/вариант) для бюджетных кейсов
+// «Платный» провайдер с ценами bfl/flux-2-klein-9b ($0.015/вариант) для бюджетных кейсов
 const makePaidProvider = ({ delayMs = 0 } = {}) => ({
   name: 'bfl',
-  model: 'flux.2-flex',
+  model: 'flux-2-klein-9b',
   async generate({ variants = 3 } = {}) {
     if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     return {
@@ -203,7 +203,7 @@ describe('S4: дневной бюджет-стоп (FR-G-080)', () => {
       providerCalled = true;
       throw new Error('must not be called');
     };
-    // 3 варианта × $0.03 = $0.09 > бюджета $0.01
+    // 3 варианта × $0.015 = $0.045 > бюджета $0.01
     const service = makeService({ provider, config: { dailyBudgetUsd: 0.01 } });
     const user = await makeUser();
     const photo = await seedPhoto(user);
@@ -217,15 +217,16 @@ describe('S4: дневной бюджет-стоп (FR-G-080)', () => {
 
   test('учитываются запросы в очереди, а не только завершённые (риск 2)', async () => {
     const provider = makePaidProvider({ delayMs: 250 });
-    const service = makeService({ provider, config: { dailyBudgetUsd: 0.10 } });
+    // бюджет $0.05: первая отправка 1×$0.045 проходит, вторая (1 in-flight + 1)×$0.045 — нет
+    const service = makeService({ provider, config: { dailyBudgetUsd: 0.05 } });
     const user = await makeUser();
     const photo = await seedPhoto(user);
 
     const first = await service.submitRequest({ user, photo, source: 'free_text', userText: 'a' });
-    expect(first.promise).toBeDefined(); // 0 + 1×0.09 ≤ 0.10
+    expect(first.promise).toBeDefined();
 
     const second = await service.submitRequest({ user, photo, source: 'free_text', userText: 'b' });
-    expect(second.budgetStopped).toBe(true); // 0 + (1 in-flight + 1) × 0.09 > 0.10
+    expect(second.budgetStopped).toBe(true);
 
     expect((await first.promise).ok).toBe(true);
   });

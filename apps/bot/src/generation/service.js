@@ -33,7 +33,8 @@ const runWithTimeout = async (fn, ms) => {
 };
 
 const isRetryableError = (error) =>
-  [ERROR_CODE.PROVIDER_TIMEOUT, ERROR_CODE.PROVIDER_ERROR, 'network'].includes(error && error.code);
+  [ERROR_CODE.PROVIDER_TIMEOUT, ERROR_CODE.PROVIDER_ERROR, 'provider_rate', 'network']
+    .includes(error && error.code);
 
 const createGenerationService = ({
   models = { User, GenerationRequest },
@@ -145,12 +146,18 @@ const createGenerationService = ({
 
   const runProvider = (request) =>
     runWithTimeout(
-      (signal) => provider.generate({
-        imageRef: request.sourcePhoto.storagePath,
-        prompt: request.finalPrompt,
-        variants: config.variants,
-        signal,
-      }),
+      async (signal) => {
+        // провайдеру нужен сам файл (data URI), а не только путь
+        const imageBuffer = await storage.read(request.sourcePhoto.storagePath);
+        return provider.generate({
+          imageRef: request.sourcePhoto.storagePath,
+          imageBuffer,
+          mime: request.sourcePhoto.mime || 'image/jpeg',
+          prompt: request.finalPrompt,
+          variants: config.variants,
+          signal,
+        });
+      },
       config.generationTimeoutMs
     );
 

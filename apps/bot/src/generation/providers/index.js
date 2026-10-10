@@ -6,7 +6,13 @@ const { FalProvider } = require('./fal');
 const getProvider = (name, options = {}) => {
   switch (name) {
     case 'bfl':
-      return new BflProvider(options);
+      return new BflProvider({
+        apiKey: options.apiKey,
+        model: options.model || 'flux-2-pro',
+        baseUrl: options.bflBaseUrl,
+        pollIntervalMs: options.pollIntervalMs,
+        fetchImpl: options.fetchImpl,
+      });
     case 'fal':
       return new FalProvider(options);
     case 'mock':

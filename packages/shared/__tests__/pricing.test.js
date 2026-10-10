@@ -2,8 +2,8 @@ const { estimateCostUsd, PRICE_TABLE } = require('@beauty/shared/src/pricing');
 
 describe('estimateCostUsd', () => {
   test('считает стоимость по цене модели × количество вариантов', () => {
-    const price = PRICE_TABLE.bfl['flux.2-pro'];
-    expect(estimateCostUsd('bfl', 'flux.2-pro', 3)).toBeCloseTo(price * 3, 6);
+    const price = PRICE_TABLE.bfl['flux-2-pro'];
+    expect(estimateCostUsd('bfl', 'flux-2-pro', 3)).toBeCloseTo(price * 3, 6);
   });
 
   test('mock-провайдер бесплатный', () => {

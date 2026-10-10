@@ -40,7 +40,12 @@ const bootstrap = async () => {
   }
   const dbConnected = Boolean(connection);
 
-  const provider = getProvider(config.generationProvider, { delayMs: config.mockDelayMs });
+  const provider = getProvider(config.generationProvider, {
+    delayMs: config.mockDelayMs,
+    apiKey: config.bflApiKey || config.falApiKey,
+    model: config.bflModel,
+    bflBaseUrl: config.bflBaseUrl || undefined,
+  });
   logger.info({ provider: provider.name, model: provider.model }, 'generation provider selected');
 
   const queue = new LimiterQueue({ concurrency: config.generationConcurrency });

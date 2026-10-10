@@ -36,7 +36,12 @@ const loadConfig = (env = process.env) => {
     generationProvider: env.GENERATION_PROVIDER || 'mock',
     bflApiKey: env.BFL_API_KEY || '',
     falApiKey: env.FAL_API_KEY || '',
-    bflModel: env.BFL_MODEL || 'flux.2-flex',
+    // flux-2-pro — рекомендованный BFL дефолт для редактирования ($0.045/вариант),
+    // flux-2-klein-9b — бюджетный ($0.015), flux-2-flex/max — по задаче сравнения
+    bflModel: env.BFL_MODEL || 'flux-2-pro',
+    // глобальный api.bfl.ai из некоторых сетей не отвечает (DPI/Azure Front Door):
+    // тогда используем региональный, например https://api.eu.bfl.ai/v1
+    bflBaseUrl: env.BFL_BASE_URL || '',
 
     variants: Math.min(int(env.VARIANTS_DEFAULT, DEFAULTS.VARIANTS), 3),
     dailyLimit: int(env.DAILY_LIMIT, DEFAULTS.DAILY_LIMIT),
