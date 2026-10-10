@@ -25,6 +25,8 @@ const userSchema = new mongoose.Schema({
       bytes: { type: Number, default: 0 },
       width: { type: Number, default: null },
       height: { type: Number, default: null },
+      // для sweep «болтающихся» фото без генерации (FR-I-080)
+      uploadedAt: { type: Date, default: null },
     },
   },
   generationsTotal: { type: Number, default: 0 },

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const { REQUEST_STATUS, REQUEST_SOURCE, PRESET_CATEGORIES } = require('../constants');
+const { REQUEST_STATUS, REQUEST_SOURCE } = require('../constants');
 
 const variantSchema = new mongoose.Schema({
   storagePath: { type: String, required: true },
@@ -27,8 +27,9 @@ const generationRequestSchema = new mongoose.Schema({
   userText: { type: String, default: null },
   finalPrompt: { type: String, required: true },
   sourcePhoto: {
+    // tgFileId обнуляется при удалении ПДн: по нему фото можно снова скачать из Telegram
     storagePath: { type: String, required: true },
-    tgFileId: { type: String, required: true },
+    tgFileId: { type: String, default: null },
     mime: { type: String, default: 'image/jpeg' },
     bytes: { type: Number, default: 0 },
     width: { type: Number, default: null },
@@ -58,5 +59,4 @@ const GenerationRequest = mongoose.model('GenerationRequest', generationRequestS
 
 module.exports = {
   GenerationRequest,
-  PRESET_CATEGORIES,
 };

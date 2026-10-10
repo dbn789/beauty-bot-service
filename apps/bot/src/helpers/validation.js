@@ -1,7 +1,10 @@
-// Валидация фото клиента (ТЗ FR-B-040): JPEG/PNG, 0.1–10 МБ, меньшая сторона ≥ 512 px.
+// Валидация фото клиента (ТЗ FR-B-040): JPEG/PNG, меньшая сторона ≥ 512 px,
+// верхняя граница 10 МБ. Нижняя граница для photo занижена (10 КБ): Telegram
+// пережимает обычные фото, и 1280 px картинка нередко весит меньше 100 КБ.
 const { imageSize } = require('./imageSize');
 
-const MIN_BYTES = 100 * 1024;
+const MIN_BYTES_PHOTO = 10 * 1024;
+const MIN_BYTES_DOCUMENT = 30 * 1024;
 const MAX_BYTES = 10 * 1024 * 1024;
 const MIN_SIDE = 512;
 
@@ -23,7 +26,7 @@ const validatePhotoMessage = (message) => {
   if (message.photo && message.photo.length > 0) {
     const largest = message.photo[message.photo.length - 1];
     const bytes = largest.file_size || 0;
-    if (bytes && (bytes < MIN_BYTES || bytes > MAX_BYTES)) {
+    if (bytes && (bytes < MIN_BYTES_PHOTO || bytes > MAX_BYTES)) {
       return { ok: false, reason: 'size' };
     }
     if (Math.min(largest.width, largest.height) < MIN_SIDE) {
@@ -44,7 +47,7 @@ const validatePhotoMessage = (message) => {
 
   if (isImageDocument(message)) {
     const doc = message.document;
-    if (!doc.file_size || doc.file_size < MIN_BYTES || doc.file_size > MAX_BYTES) {
+    if (!doc.file_size || doc.file_size < MIN_BYTES_DOCUMENT || doc.file_size > MAX_BYTES) {
       return { ok: false, reason: 'size' };
     }
     // Стороны документа узнаем после скачивания (checkDownloadedPhoto)
@@ -68,7 +71,7 @@ const validatePhotoMessage = (message) => {
  * Повторная проверка скачанного буфера (для document, где стороны неизвестны из Telegram).
  */
 const checkDownloadedPhoto = (buffer) => {
-  if (buffer.length < MIN_BYTES || buffer.length > MAX_BYTES) {
+  if (buffer.length < MIN_BYTES_DOCUMENT || buffer.length > MAX_BYTES) {
     return { ok: false, reason: 'size' };
   }
   const size = imageSize(buffer);

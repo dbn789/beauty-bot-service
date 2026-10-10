@@ -1,5 +1,8 @@
 // Телеграм-слой (ТЗ 7.3): state-machine поверх users.dialogState в MongoDB.
 // Состояние переживает рестарт контейнера (S7), сессий в памяти нет.
+// Хендлеры не ждут генерацию: трекинг уходит в фон, результат отправляется
+// через bot.telegram по chatId — иначе polling блокируется для всех
+// пользователей на время генерации (ревью 3e35882, риск 1).
 const { Telegraf, Input } = require('telegraf');
 const { DIALOG_STEP, PRESETS_CATALOG } = require('@beauty/shared');
 const texts = require('./helpers/texts');
@@ -8,7 +11,17 @@ const { validatePhotoMessage, checkDownloadedPhoto, isPhotoPayload } = require('
 const { nextResetTimeMoscow } = require('./helpers/day');
 
 const EMPTY_PHOTO = {
-  storagePath: null, tgFileId: null, mime: null, bytes: 0, width: null, height: null,
+  storagePath: null, tgFileId: null, mime: null, bytes: 0, width: null, height: null, uploadedAt: null,
+};
+
+const photoInvalidText = {
+  size: texts.photoInvalidSize,
+  too_small: texts.photoInvalidTooSmall,
+};
+
+const presetTitle = (code) => {
+  const preset = PRESETS_CATALOG.find((p) => p.code === code);
+  return preset ? preset.titleRu : 'Стиль не найден';
 };
 
 const createBot = ({ token, logger, config, models, storage, generation, retention }) => {
@@ -34,6 +47,22 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
       { new: true }
     );
 
+  // Сброс processing → idle только если шаг всё ещё processing (не топчем новое состояние)
+  const finishStep = (userId) =>
+    models.User.updateOne(
+      { _id: userId, 'dialogState.step': DIALOG_STEP.PROCESSING },
+      { $set: { 'dialogState.step': DIALOG_STEP.IDLE } }
+    );
+
+  // Атомарный захват: двойной тап или старая кнопка не создадут вторую генерацию
+  // (ревью 3e35882, риск 2)
+  const claimProcessing = (userId) =>
+    models.User.findOneAndUpdate(
+      { _id: userId, 'dialogState.step': { $ne: DIALOG_STEP.PROCESSING } },
+      { $set: { 'dialogState.step': DIALOG_STEP.PROCESSING } },
+      { new: true }
+    );
+
   const answerCb = (ctx, text) =>
     ctx.answerCbQuery(text).catch((error) => logger.warn({ err: error.message }, 'answerCbQuery failed'));
 
@@ -43,80 +72,124 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
     return false;
   };
 
-  // Общий путь генерации: статус → результат/ошибка, тикер chat action (FR-B-050)
-  const submitAndTrack = async (ctx, user, { source, preset = null, userText = null, photo = null, title = null }) => {
+  const editStatus = (chatId, messageId, text, keyboard) =>
+    bot.telegram.editMessageText(chatId, messageId, undefined, text, keyboard).catch(() => {});
+
+  const sendAlbum = async (chatId, request, preset) => {
+    const media = [];
+    for (let i = 0; i < request.variants.length; i += 1) {
+      const buffer = await storage.read(request.variants[i].storagePath);
+      media.push({
+        type: 'photo',
+        media: Input.fromBuffer(buffer, `variant-${i + 1}.png`),
+      });
+    }
+    const total = request.variants.length;
+    media[0].caption = preset
+      ? texts.resultCaption.replace('{title}', `${preset.emoji} ${preset.titleRu}`).replace('{total}', total)
+      : texts.resultCaptionFree.replace('{total}', total);
+    await bot.telegram.sendMediaGroup(chatId, media);
+  };
+
+  // Фоновый трекинг: результат/ошибка уходят клиенту по завершении очереди
+  const runTracking = async (chatId, statusMessageId, user, { source, preset, userText, photo }) => {
+    try {
+      const result = await generation.submitRequest({ user, photo, source, preset, userText });
+
+      if (result.limited) {
+        await finishStep(user._id);
+        await editStatus(chatId, statusMessageId, texts.limitReached
+          .replace('{limit}', config.dailyLimit)
+          .replace('{resetAt}', nextResetTimeMoscow()));
+        return;
+      }
+      if (result.busy) {
+        await finishStep(user._id);
+        await editStatus(chatId, statusMessageId, texts.serviceBusy, keyboards.buildRetryKeyboard());
+        return;
+      }
+      if (result.budgetStopped) {
+        await finishStep(user._id);
+        await editStatus(chatId, statusMessageId, texts.budgetStopped);
+        return;
+      }
+      if (result.invalidPhoto) {
+        await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO, { 'dialogState.photo': EMPTY_PHOTO });
+        await editStatus(chatId, statusMessageId, texts.askPhoto);
+        return;
+      }
+
+      const outcome = await result.promise;
+      await finishStep(user._id);
+
+      if (!outcome.ok) {
+        await editStatus(chatId, statusMessageId, texts.generationError, keyboards.buildRetryKeyboard());
+        return;
+      }
+
+      // клиент мог удалить данные во время генерации — тогда ничего не отправляем
+      const request = await models.GenerationRequest.findById(outcome.request._id);
+      if (!request || request.deletedAt) return;
+
+      await sendAlbum(chatId, request, preset);
+      await bot.telegram.deleteMessage(chatId, statusMessageId).catch(() => {});
+      await bot.telegram.sendMessage(chatId, texts.resultReady, keyboards.buildResultActionsKeyboard());
+    } catch (error) {
+      logger.error({ err: error.message }, 'generation tracking failed');
+      await finishStep(user._id);
+      await editStatus(chatId, statusMessageId, texts.generationError, keyboards.buildRetryKeyboard());
+    }
+  };
+
+  const launchGeneration = async (ctx, user, { source, preset = null, userText = null, photo = null, title = null }) => {
     const photoMeta = photo || user.dialogState.photo;
-    if (!photoMeta || !photoMeta.storagePath) {
+    if (!photoMeta || !photoMeta.storagePath || !(await storage.exists(photoMeta.storagePath))) {
       await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO, { 'dialogState.photo': EMPTY_PHOTO });
       await ctx.reply(texts.askPhoto);
       return;
     }
+    const claimed = await claimProcessing(user._id);
+    if (!claimed) {
+      await ctx.reply(texts.processingBusy);
+      return;
+    }
 
-    await setStep(user._id, DIALOG_STEP.PROCESSING);
+    const chatId = ctx.chat.id;
     const statusText = title
       ? texts.generatingFor.replace('{title}', title)
       : texts.generating.replace('{variants}', config.variants);
     const statusMessage = await ctx.reply(statusText);
     const ticker = setInterval(() => {
-      ctx.telegram.sendChatAction(ctx.chat.id, 'upload_photo').catch(() => {});
+      bot.telegram.sendChatAction(chatId, 'upload_photo').catch(() => {});
     }, 5000);
 
-    try {
-      const result = await generation.submitRequest({
-        user, photo: photoMeta, source, preset, userText,
-      });
+    runTracking(chatId, statusMessage.message_id, claimed, { source, preset, userText, photo: photoMeta })
+      .catch((error) => logger.error({ err: error.message }, 'runTracking crashed'))
+      .finally(() => clearInterval(ticker));
+  };
 
-      if (result.limited) {
-        await setStep(user._id, DIALOG_STEP.IDLE);
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, statusMessage.message_id, undefined,
-          texts.limitReached
-            .replace('{limit}', config.dailyLimit)
-            .replace('{resetAt}', nextResetTimeMoscow())
-        );
-        return;
-      }
-
-      if (result.budgetStopped) {
-        await setStep(user._id, DIALOG_STEP.IDLE);
-        await ctx.telegram.editMessageText(ctx.chat.id, statusMessage.message_id, undefined, texts.budgetStopped);
-        return;
-      }
-
-      const outcome = await result.promise;
-      await setStep(user._id, DIALOG_STEP.IDLE);
-
-      if (!outcome.ok) {
-        await ctx.telegram.editMessageText(
-          ctx.chat.id, statusMessage.message_id, undefined,
-          texts.generationError, keyboards.buildRetryKeyboard()
-        );
-        return;
-      }
-
-      await ctx.telegram.deleteMessage(ctx.chat.id, statusMessage.message_id).catch(() => {});
-      const variants = outcome.request.variants;
-      const media = [];
-      for (let i = 0; i < variants.length; i += 1) {
-        const buffer = await storage.read(variants[i].storagePath);
-        media.push({
-          type: 'photo',
-          media: Input.fromBuffer(buffer, `variant-${i + 1}.png`),
-        });
-      }
-      const total = variants.length;
-      media[0].caption = preset
-        ? texts.resultCaption.replace('{title}', `${preset.emoji} ${preset.titleRu}`).replace('{total}', total)
-        : texts.resultCaptionFree.replace('{total}', total);
-      await ctx.replyWithMediaGroup(media);
-      await ctx.reply(texts.resultReady, keyboards.buildResultActionsKeyboard());
-    } catch (error) {
-      logger.error({ err: error.message }, 'submitAndTrack failed');
-      await setStep(user._id, DIALOG_STEP.IDLE);
-      await ctx.reply(texts.generationError, keyboards.buildRetryKeyboard()).catch(() => {});
-    } finally {
-      clearInterval(ticker);
+  const downloadPhoto = async (ctx, meta) => {
+    const file = await ctx.telegram.getFile(meta.tgFileId);
+    const link = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+    const response = await fetch(link, { signal: AbortSignal.timeout(20000) });
+    if (!response.ok) throw new Error(`telegram file http ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const recheck = checkDownloadedPhoto(buffer);
+    if (!recheck.ok) {
+      const error = new Error(`downloaded photo rejected: ${recheck.reason}`);
+      error.code = 'validation';
+      error.reason = recheck.reason;
+      throw error;
     }
+    return { ...meta, buffer, width: recheck.meta.width, height: recheck.meta.height };
+  };
+
+  const clearDialogPhoto = async (user) => {
+    const current = user.dialogState.photo;
+    if (current && current.storagePath) {
+      await storage.deleteFiles([current.storagePath]);
+    }
+    return { 'dialogState.photo': EMPTY_PHOTO };
   };
 
   bot.catch((error) => {
@@ -139,7 +212,8 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
 
   bot.command('cancel', async (ctx) => {
     const user = await getOrCreateUser(ctx);
-    await setStep(user._id, DIALOG_STEP.IDLE, { 'dialogState.photo': EMPTY_PHOTO });
+    const extra = await clearDialogPhoto(user);
+    await setStep(user._id, DIALOG_STEP.IDLE, extra);
     await ctx.reply(texts.cancelled);
   });
 
@@ -152,25 +226,35 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
   // ── callback-кнопки ────────────────────────────────────────────────────────
   bot.action('privacy:accept', async (ctx) => {
     const user = await getOrCreateUser(ctx);
+    await answerCb(ctx, 'Принято!');
     await models.User.updateOne(
       { _id: user._id, privacyAcceptedAt: null },
       { $set: { privacyAcceptedAt: new Date() } }
     );
-    await answerCb(ctx, 'Принято!');
     await ctx.editMessageText(texts.privacyAccepted, keyboards.buildMainMenuKeyboard());
   });
 
   bot.action('menu:start', async (ctx) => {
+    await answerCb(ctx);
     const user = await getOrCreateUser(ctx);
     if (!(await requirePrivacy(ctx, user))) return;
-    await answerCb(ctx);
-    await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO, { 'dialogState.photo': EMPTY_PHOTO });
+    const extra = await clearDialogPhoto(user);
+    await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO, extra);
     await ctx.editMessageText(texts.askPhoto);
   });
 
   bot.action('menu:free_text', async (ctx) => {
     await answerCb(ctx);
-    await setStep((await getOrCreateUser(ctx))._id, DIALOG_STEP.AWAIT_TEXT);
+    const user = await getOrCreateUser(ctx);
+    if (!(await requirePrivacy(ctx, user))) return;
+    // без фото свободный текст бессмыслен — просим фото (ревью 3e35882, риск 10)
+    if (!user.dialogState.photo || !user.dialogState.photo.storagePath
+        || !(await storage.exists(user.dialogState.photo.storagePath))) {
+      await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO);
+      await ctx.editMessageText(texts.askPhoto);
+      return;
+    }
+    await setStep(user._id, DIALOG_STEP.AWAIT_TEXT);
     await ctx.editMessageText(texts.askFreeText);
   });
 
@@ -190,63 +274,61 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
   });
 
   bot.action(/^preset:(.+)$/, async (ctx) => {
+    await answerCb(ctx, presetTitle(ctx.match[1]));
     const user = await getOrCreateUser(ctx);
+    if (!(await requirePrivacy(ctx, user))) return;
     const preset = PRESETS_CATALOG.find((p) => p.code === ctx.match[1]);
     if (!preset) {
-      await answerCb(ctx, 'Стиль не найден');
       await ctx.editMessageText(texts.askChoice, keyboards.buildCategoriesKeyboard());
       return;
     }
-    await answerCb(ctx, preset.titleRu);
-    await submitAndTrack(ctx, user, { source: 'preset', preset, title: preset.titleRu });
+    await launchGeneration(ctx, user, { source: 'preset', preset, title: preset.titleRu });
   });
 
-  bot.action('more:last', async (ctx) => {
-    const user = await getOrCreateUser(ctx);
-    const last = await generation.lastDoneRequest(user._id);
-    if (!last) {
-      await answerCb(ctx, 'Нет предыдущей генерации');
-      await setStep(user._id, DIALOG_STEP.AWAIT_CHOICE);
-      await ctx.editMessageText(texts.askChoice, keyboards.buildCategoriesKeyboard());
-      return;
-    }
-    await answerCb(ctx);
+  // Повтор последней генерации по готовому запросу (собственная копия фото у запроса)
+  const launchGenerationFromRequest = async (ctx, user, last) => {
     const preset = last.presetCode
       ? PRESETS_CATALOG.find((p) => p.code === last.presetCode) || null
       : null;
-    await submitAndTrack(ctx, user, {
+    await launchGeneration(ctx, user, {
       source: last.source,
       preset,
       userText: last.userText,
       photo: last.sourcePhoto,
       title: preset ? preset.titleRu : null,
     });
-  });
+  };
 
-  bot.action('act:retry', async (ctx) => {
-    const user = await getOrCreateUser(ctx);
+  bot.action('more:last', async (ctx) => {
     await answerCb(ctx);
+    const user = await getOrCreateUser(ctx);
     const last = await generation.lastDoneRequest(user._id);
     if (!last) {
       await setStep(user._id, DIALOG_STEP.AWAIT_CHOICE);
       await ctx.editMessageText(texts.askChoice, keyboards.buildCategoriesKeyboard());
       return;
     }
-    const preset = last.presetCode ? PRESETS_CATALOG.find((p) => p.code === last.presetCode) || null : null;
-    await submitAndTrack(ctx, user, {
-      source: last.source,
-      preset,
-      userText: last.userText,
-      photo: last.sourcePhoto,
-      title: preset ? preset.titleRu : null,
-    });
+    await launchGenerationFromRequest(ctx, user, last);
+  });
+
+  bot.action('act:retry', async (ctx) => {
+    await answerCb(ctx);
+    const user = await getOrCreateUser(ctx);
+    const last = await generation.lastDoneRequest(user._id);
+    if (!last) {
+      await setStep(user._id, DIALOG_STEP.AWAIT_CHOICE);
+      await ctx.editMessageText(texts.askChoice, keyboards.buildCategoriesKeyboard());
+      return;
+    }
+    await launchGenerationFromRequest(ctx, user, last);
   });
 
   bot.action('style:again', async (ctx) => {
-    const user = await getOrCreateUser(ctx);
     await answerCb(ctx);
-    if (!user.dialogState.photo || !user.dialogState.photo.storagePath) {
-      await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO);
+    const user = await getOrCreateUser(ctx);
+    if (!user.dialogState.photo || !user.dialogState.photo.storagePath
+        || !(await storage.exists(user.dialogState.photo.storagePath))) {
+      await setStep(user._id, DIALOG_STEP.AWAIT_PHOTO, { 'dialogState.photo': EMPTY_PHOTO });
       await ctx.editMessageText(texts.askPhoto);
       return;
     }
@@ -255,9 +337,10 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
   });
 
   bot.action('act:cancel', async (ctx) => {
-    const user = await getOrCreateUser(ctx);
     await answerCb(ctx);
-    await setStep(user._id, DIALOG_STEP.IDLE, { 'dialogState.photo': EMPTY_PHOTO });
+    const user = await getOrCreateUser(ctx);
+    const extra = await clearDialogPhoto(user);
+    await setStep(user._id, DIALOG_STEP.IDLE, extra);
     await ctx.editMessageText(texts.cancelled);
   });
 
@@ -282,11 +365,16 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
       }
       const validation = validatePhotoMessage(ctx.message);
       if (!validation.ok) {
-        await ctx.reply(texts.photoInvalid);
+        await ctx.reply(photoInvalidText[validation.reason] || texts.photoInvalid);
         return;
       }
       try {
         const meta = await downloadPhoto(ctx, validation.meta);
+        // подменяем предыдущее фото: старый файл больше не нужен
+        const previous = user.dialogState.photo;
+        if (previous && previous.storagePath) {
+          await storage.deleteFiles([previous.storagePath]);
+        }
         const storagePath = await storage.saveSource({
           userId: user._id, ext: meta.ext, buffer: meta.buffer,
         });
@@ -302,12 +390,17 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
                 bytes: meta.buffer.length,
                 width: meta.width,
                 height: meta.height,
+                uploadedAt: new Date(),
               },
             },
           }
         );
         await ctx.reply(texts.askChoice, keyboards.buildCategoriesKeyboard());
       } catch (error) {
+        if (error.code === 'validation') {
+          await ctx.reply(photoInvalidText[error.reason] || texts.photoInvalid);
+          return;
+        }
         logger.error({ err: error.message }, 'photo download failed');
         await ctx.reply(texts.photoInvalid);
       }
@@ -321,7 +414,7 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
           await ctx.reply(texts.freeTextInvalid);
           return;
         }
-        await submitAndTrack(ctx, user, { source: 'free_text', userText: text });
+        await launchGeneration(ctx, user, { source: 'free_text', userText: text });
         return;
       }
       if (step === DIALOG_STEP.AWAIT_PHOTO) {
@@ -338,21 +431,6 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
 
     await ctx.reply(step === DIALOG_STEP.AWAIT_PHOTO ? texts.askPhoto : texts.hintIdle);
   });
-
-  const downloadPhoto = async (ctx, meta) => {
-    const file = await ctx.telegram.getFile(meta.tgFileId);
-    const link = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-    const response = await fetch(link);
-    if (!response.ok) throw new Error(`telegram file http ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const recheck = checkDownloadedPhoto(buffer);
-    if (!recheck.ok) {
-      const error = new Error(`downloaded photo rejected: ${recheck.reason}`);
-      error.code = 'validation';
-      throw error;
-    }
-    return { ...meta, buffer, width: recheck.meta.width, height: recheck.meta.height };
-  };
 
   return bot;
 };

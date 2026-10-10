@@ -16,6 +16,8 @@ const nodeGlobals = {
   fetch: 'readonly',
   URL: 'readonly',
   URLSearchParams: 'readonly',
+  AbortController: 'readonly',
+  AbortSignal: 'readonly',
 };
 
 export default [

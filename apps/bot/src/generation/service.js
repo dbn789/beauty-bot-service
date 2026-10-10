@@ -1,31 +1,49 @@
 // Оркестратор генерации (ТЗ FR-G-020..110): лимиты, бюджет-стоп, очередь, ретраи,
-// сохранение результатов и метрик. Возвращает promise-обёртку, которая не reject'ит —
-// исход всегда фиксируется в GenerationRequest (статусы/ошибки), а бот-слой решает, что писать клиенту.
+// сохранение результатов и метрик. submitRequest никогда не бросает — исход
+// фиксируется в GenerationRequest, а бот-слой решает, что писать клиенту.
+const path = require('path');
 const {
   User,
   GenerationRequest,
   REQUEST_STATUS,
+  DIALOG_STEP,
   ERROR_CODE,
   estimateCostUsd,
   buildHairstylePrompt,
 } = require('@beauty/shared');
 
-const withTimeout = (promise, ms) => {
+// Таймаут с реальной отменой: AbortSignal уходит провайдеру (fetch прерывается),
+// гонка страхует от провайдеров, которые сигнал игнорируют (ревью 3e35882, риск 4).
+const runWithTimeout = async (fn, ms) => {
+  const controller = new AbortController();
   let timer;
   const timeout = new Promise((_resolve, reject) => {
     timer = setTimeout(() => {
+      controller.abort();
       const error = new Error(`generation timed out after ${ms}ms`);
       error.code = ERROR_CODE.PROVIDER_TIMEOUT;
       reject(error);
     }, ms);
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  try {
+    return await Promise.race([fn(controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 const isRetryableError = (error) =>
   [ERROR_CODE.PROVIDER_TIMEOUT, ERROR_CODE.PROVIDER_ERROR, 'network'].includes(error && error.code);
 
-const createGenerationService = ({ models = { User, GenerationRequest }, storage, provider, config, logger, queue, dayKey = require('../helpers/day').moscowDayKey }) => {
+const createGenerationService = ({
+  models = { User, GenerationRequest },
+  storage,
+  provider,
+  config,
+  logger,
+  queue,
+  dayKey = require('../helpers/day').moscowDayKey,
+}) => {
   const spentTodayUsd = async (day) => {
     const rows = await models.GenerationRequest.aggregate([
       { $match: { day, status: REQUEST_STATUS.DONE } },
@@ -40,9 +58,16 @@ const createGenerationService = ({ models = { User, GenerationRequest }, storage
       userId, day, status: REQUEST_STATUS.DONE,
     });
 
+  // Оценочная стоимость очереди (queued/processing) — чтобы параллельные отправки
+  // не обошли дневной бюджет (ревью 3e35882, риск 2)
+  const countInFlightToday = (day) =>
+    models.GenerationRequest.countDocuments({
+      day, status: { $in: [REQUEST_STATUS.QUEUED, REQUEST_STATUS.PROCESSING] },
+    });
+
   /**
    * Принимает проверенные данные к генерации. Никогда не бросает — возвращает исход.
-   * @returns {Promise<{limited?:boolean, budgetStopped?:boolean, requestId?:string, promise?:Promise}>}
+   * @returns {Promise<{limited|busy|budgetStopped|invalidPhoto|requestId|promise}>}
    */
   const submitRequest = async ({ user, photo, source, preset = null, userText = null, day = dayKey() }) => {
     // FR-B-080: суточный лимит (считаем успешные генерации)
@@ -51,24 +76,32 @@ const createGenerationService = ({ models = { User, GenerationRequest }, storage
       return { limited: true };
     }
 
-    // FR-G-080: дневной бюджет-стоп (оценка до вызова провайдера)
+    // Защита очереди от переполнения
+    if (queue.size >= config.maxQueueSize) {
+      logger.warn({ size: queue.size }, 'generation queue full');
+      return { busy: true };
+    }
+
+    // FR-G-080: дневной бюджет-стоп (оценка до вызова провайдера, включая очередь)
     const estimate = estimateCostUsd(provider.name, provider.model, config.variants) || 0;
-    const spent = await spentTodayUsd(day);
-    if (estimate > 0 && spent + estimate > config.dailyBudgetUsd) {
-      const request = await models.GenerationRequest.create({
-        userId: user._id,
-        status: REQUEST_STATUS.BUDGET_STOPPED,
-        source,
-        presetCode: preset ? preset.code : null,
-        userText,
-        finalPrompt: '—',
-        sourcePhoto: photo,
-        provider: provider.name,
-        model: provider.model,
-        day,
-      });
-      logger.warn({ day, spent, estimate, requestId: String(request._id) }, 'budget stop');
-      return { budgetStopped: true, requestId: String(request._id) };
+    if (estimate > 0) {
+      const [spent, inFlight] = await Promise.all([spentTodayUsd(day), countInFlightToday(day)]);
+      if (spent + (inFlight + 1) * estimate > config.dailyBudgetUsd) {
+        const request = await models.GenerationRequest.create({
+          userId: user._id,
+          status: REQUEST_STATUS.BUDGET_STOPPED,
+          source,
+          presetCode: preset ? preset.code : null,
+          userText,
+          finalPrompt: '—',
+          sourcePhoto: photo,
+          provider: provider.name,
+          model: provider.model,
+          day,
+        });
+        logger.warn({ day, spent, inFlight, estimate, requestId: String(request._id) }, 'budget stop');
+        return { budgetStopped: true, requestId: String(request._id) };
+      }
     }
 
     const finalPrompt = buildHairstylePrompt({
@@ -88,18 +121,38 @@ const createGenerationService = ({ models = { User, GenerationRequest }, storage
       day,
     });
 
+    // Собственная копия исходника для запроса (ревью 3e35882, риск 5):
+    // новая загрузка пользователя не ломает more:last / act:retry
+    try {
+      const ext = path.extname(photo.storagePath).slice(1) || 'jpg';
+      const ownPath = await storage.copyFile({
+        from: photo.storagePath,
+        to: path.join('results', String(request._id), `source.${ext}`),
+      });
+      request.sourcePhoto.storagePath = ownPath;
+      await request.save();
+    } catch (error) {
+      logger.error({ requestId: String(request._id), err: error.message }, 'source photo copy failed');
+      request.status = REQUEST_STATUS.ERROR;
+      request.error = { code: ERROR_CODE.VALIDATION, message: 'source photo is missing', retried: false };
+      await request.save();
+      return { invalidPhoto: true, requestId: String(request._id) };
+    }
+
     const promise = queue.add(() => processRequest(String(request._id)));
     return { requestId: String(request._id), promise };
   };
 
-  const runProvider = async (request) => withTimeout(
-    provider.generate({
-      imageRef: request.sourcePhoto.storagePath,
-      prompt: request.finalPrompt,
-      variants: config.variants,
-    }),
-    config.generationTimeoutMs
-  );
+  const runProvider = (request) =>
+    runWithTimeout(
+      (signal) => provider.generate({
+        imageRef: request.sourcePhoto.storagePath,
+        prompt: request.finalPrompt,
+        variants: config.variants,
+        signal,
+      }),
+      config.generationTimeoutMs
+    );
 
   const processRequest = async (requestId) => {
     const request = await models.GenerationRequest.findById(requestId);
@@ -153,6 +206,13 @@ const createGenerationService = ({ models = { User, GenerationRequest }, storage
       await request.save();
       await models.User.updateOne({ _id: request.userId }, { $inc: { generationsTotal: 1 } });
       logger.info({ requestId, durationMs: request.durationMs, variants: variants.length }, 'generation done');
+
+      // клиент удалил данные, пока шла генерация: файлы — в мусор, ничего не отправим
+      const fresh = await models.GenerationRequest.findById(requestId, { deletedAt: 1 });
+      if (fresh && fresh.deletedAt) {
+        await storage.deleteRequestArtifacts({ requestId, paths: requestPaths(request) });
+        logger.info({ requestId }, 'artifacts dropped: user data deleted during generation');
+      }
       return { ok: true, request };
     }
 
@@ -168,25 +228,37 @@ const createGenerationService = ({ models = { User, GenerationRequest }, storage
     return { ok: false, request };
   };
 
-  // S7: рестарт во время генерации — висящие запросы в error
-  const recoverInterrupted = async (now = new Date()) => {
-    const boundary = new Date(now.getTime() - 5 * 60 * 1000);
-    const result = await models.GenerationRequest.updateMany(
-      {
-        status: { $in: [REQUEST_STATUS.QUEUED, REQUEST_STATUS.PROCESSING] },
-        updatedAt: { $lt: boundary },
-      },
-      {
-        $set: {
-          status: REQUEST_STATUS.ERROR,
-          error: { code: ERROR_CODE.INTERNAL, message: 'interrupted by restart', retried: false },
-        },
-      }
-    );
-    if (result.modifiedCount > 0) {
-      logger.warn({ count: result.modifiedCount }, 'recovered interrupted requests');
+  const requestPaths = (request) => [
+    request.sourcePhoto && request.sourcePhoto.storagePath,
+    ...(request.variants || []).map((v) => v.storagePath),
+  ].filter(Boolean);
+
+  // S7: рестарт во время генерации. Очередь in-process — на старте она пуста,
+  // поэтому «висящих» queued/processing быть не может: помечаем все (без порога
+  // давности, ревью 3e35882, риск 3) и возвращаем userId для уведомления клиентов.
+  const recoverInterrupted = async () => {
+    const stuck = await models.GenerationRequest.find(
+      { status: { $in: [REQUEST_STATUS.QUEUED, REQUEST_STATUS.PROCESSING] } },
+      { userId: 1 }
+    ).lean();
+    if (stuck.length > 0) {
+      await models.GenerationRequest.updateMany(
+        { status: { $in: [REQUEST_STATUS.QUEUED, REQUEST_STATUS.PROCESSING] } },
+        {
+          $set: {
+            status: REQUEST_STATUS.ERROR,
+            error: { code: ERROR_CODE.INTERNAL, message: 'interrupted by restart', retried: false },
+          },
+        }
+      );
+      // пользователи не должны остаться в processing без живого трекинга
+      await models.User.updateMany(
+        { 'dialogState.step': DIALOG_STEP.PROCESSING },
+        { $set: { 'dialogState.step': DIALOG_STEP.IDLE } }
+      );
+      logger.warn({ count: stuck.length }, 'recovered interrupted requests');
     }
-    return result.modifiedCount;
+    return [...new Set(stuck.map((r) => String(r.userId)))];
   };
 
   const lastDoneRequest = (userId) =>

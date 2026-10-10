@@ -41,6 +41,13 @@ describe('checkDownloadedPhoto / validatePhotoMessage (FR-B-040)', () => {
     expect(result.meta.mime).toBe('image/jpeg');
   });
 
+  test('лёгкое пережатое Telegram-фото (50 КБ, 1280 px) проходит (риск 9)', () => {
+    const result = validatePhotoMessage({
+      photo: [{ width: 1280, height: 960, file_id: 'f1b', file_size: 50 * 1024 }],
+    });
+    expect(result.ok).toBe(true);
+  });
+
   test('photo меньше 512 px по меньшей стороне — отказ', () => {
     const result = validatePhotoMessage({
       photo: [{ width: 1024, height: 400, file_id: 'f2', file_size: 500 * 1024 }],
@@ -62,6 +69,13 @@ describe('checkDownloadedPhoto / validatePhotoMessage (FR-B-040)', () => {
     expect(result.ok).toBe(true);
     expect(result.meta.ext).toBe('png');
     expect(result.meta.width).toBeNull();
+  });
+
+  test('document меньше 30 КБ — отказ (для документов порог строже)', () => {
+    const result = validatePhotoMessage({
+      document: { file_id: 'd1b', mime_type: 'image/png', file_size: 20 * 1024 },
+    });
+    expect(result).toEqual({ ok: false, reason: 'size' });
   });
 
   test('document не-изображение — отказ', () => {

@@ -6,12 +6,18 @@ const connectDb = async ({ mongoUri, logger }) => {
     logger.warn('MONGO_URI is not set: db unavailable, features requiring db are disabled');
     return null;
   }
-  mongoose.connection.on('error', (error) => {
-    logger.error({ err: error.message }, 'mongo connection error');
-  });
-  await mongoose.connect(mongoUri);
-  logger.info('mongo connected');
-  return mongoose.connection;
+  try {
+    mongoose.connection.on('error', (error) => {
+      logger.error({ err: error.message }, 'mongo connection error');
+    });
+    await mongoose.connect(mongoUri);
+    logger.info('mongo connected');
+    return mongoose.connection;
+  } catch (error) {
+    // причина недоступности — в лог, а не только факт (ревью 3e35882, риск 7)
+    logger.error({ err: error.message }, 'mongo connect failed');
+    return null;
+  }
 };
 
 const dbState = () => {

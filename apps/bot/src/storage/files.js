@@ -1,7 +1,6 @@
 // Файловое хранилище изображений (ТЗ Д3, FR-I-070): DATA_DIR/photos/{sources,results}.
 // Исходники: photos/sources/<userId>/<uuid>.<ext> — один актуальный на пользователя.
 // Результаты: photos/results/<requestId>/v<N>.png
-const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
@@ -56,6 +55,17 @@ const createFileStorage = ({ dataDir, logger }) => {
     }
   };
 
+  // Копия исходника в собственность запроса (ревью 3e35882, риск 5):
+  // у каждого GenerationRequest свой файл, который не может быть перезаписан
+  // новой загрузкой пользователя и чистится вместе с запросом.
+  const copyFile = async ({ from, to }) => {
+    const source = safePath(from);
+    const target = safePath(to);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.copyFile(source, target);
+    return path.relative(root, target);
+  };
+
   const deleteFiles = async (relatives) => {
     let deleted = 0;
     for (const relative of relatives || []) {
@@ -76,20 +86,15 @@ const createFileStorage = ({ dataDir, logger }) => {
     return deleted;
   };
 
-  const stat = () => ({
-    root,
-    writable: fs.constants.W_OK,
-  });
-
   return {
     init,
     saveSource,
     saveVariant,
+    copyFile,
     read,
     exists,
     deleteFiles,
     deleteRequestArtifacts,
-    stat,
   };
 };
 

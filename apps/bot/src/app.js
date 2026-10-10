@@ -8,11 +8,14 @@ const createApp = ({ logger, dbState = () => 'unknown', provider = null } = {}) 
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/health', (_req, res) => {
-    res.json({
-      status: 'ok',
+    const db = dbState();
+    // 503 при деградации: пробы платформы (Amvera) перезапустят контейнер,
+    // а не будут считать «живой» болванку без БД (ревью 3e35882, риск 7)
+    res.status(db === 'ok' ? 200 : 503).json({
+      status: db === 'ok' ? 'ok' : 'degraded',
       app: 'beauty-bot',
       version,
-      db: dbState(),
+      db,
       provider,
       ts: new Date().toISOString(),
     });
