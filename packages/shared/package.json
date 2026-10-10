@@ -1,0 +1,10 @@
+{
+  "name": "@beauty/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Общие модели, константы и логика beauty-bot и beauty-admin",
+  "main": "src/index.js",
+  "dependencies": {
+    "mongoose": "^8.9.5"
+  }
+}

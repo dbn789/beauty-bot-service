@@ -1,0 +1,14 @@
+extends layout
+
+block content
+  main.login-page
+    form.login-card(method="post" action="/login")
+      h1 💇‍♀️ Beauty Admin
+      p.hint Панель управления сервисом подбора причёсок
+      if error
+        p.error= error
+      label Логин
+      input(type="text" name="login" required autofocus autocomplete="username")
+      label Пароль
+      input(type="password" name="password" required autocomplete="current-password")
+      button(type="submit") Войти

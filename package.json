@@ -1,0 +1,30 @@
+{
+  "name": "beauty-bot-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Telegram-бот подбора причёсок (FLUX.2) для салона красоты: инстанс бота + админка",
+  "engines": {
+    "node": ">=18.18"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "start:bot": "npm run start -w @beauty/bot",
+    "start:admin": "npm run start -w @beauty/admin",
+    "seed:presets": "node scripts/seed-presets.js",
+    "admin:create-user": "node scripts/admin-create-user.js",
+    "docker:build:bot": "docker build -f apps/bot/Dockerfile -t beauty-bot:dev .",
+    "docker:build:admin": "docker build -f apps/admin/Dockerfile -t beauty-admin:dev ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "eslint": "^9.22.0",
+    "jest": "^29.7.0"
+  }
+}

@@ -1,0 +1,23 @@
+extends layout
+
+block content
+  main.dashboard-page
+    header.topbar
+      h1 Дашборд
+      a.logout(href="/login") Выйти
+    section.placeholder
+      p Каркас админки развёрнут (этап Э0).
+      p Статистика, журнал генераций и пользователи появятся на этапе Э4 (ТЗ 5.3).
+      p.health-status
+        | Статус API: 
+        span#api-status проверяю…
+        |  · версия: 
+        span#version —
+    script.
+      fetch('/health')
+        .then((r) => r.json())
+        .then((h) => {
+          document.getElementById('api-status').textContent = h.status;
+          document.getElementById('version').textContent = h.version;
+        })
+        .catch(() => { document.getElementById('api-status').textContent = 'недоступен'; });

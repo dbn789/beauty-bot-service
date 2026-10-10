@@ -1,0 +1,17 @@
+{
+  "name": "@beauty/admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Админка beauty-сервиса (контейнер beauty-admin)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@beauty/shared": "*",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "pug": "^3.0.3"
+  }
+}
