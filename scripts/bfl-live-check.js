@@ -8,6 +8,7 @@
 // Результаты: tmp-live/ (gitignored). Ключ читается из env и нигде не печатается.
 const fs = require('fs');
 const path = require('path');
+require('dns').setDefaultResultOrder('ipv4first'); // сети без IPv6: см. apps/bot/index.js
 const { BflProvider } = require('../apps/bot/src/generation/providers/bfl');
 const { buildHairstylePrompt, PRESETS_CATALOG } = require('@beauty/shared');
 

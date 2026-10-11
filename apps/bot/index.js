@@ -1,6 +1,15 @@
 // Точка входа контейнера beauty-bot (ТЗ 7.3):
 // Internal API + бот + генерация + ретеншн + graceful shutdown.
 const { User, GenerationRequest } = require('@beauty/shared');
+
+// Сети без IPv6-маршрута: DNS bfl по ротации отдаёт AAAA первым, а fetch Node 18
+// без отката ловит CONNECT_TIMEOUT — отсюда прерывистые отказы провайдера.
+// Принудительный IPv4-first + happy-eyeballs, где доступно.
+require('dns').setDefaultResultOrder('ipv4first');
+try {
+  require('net').setDefaultAutoSelectFamily(true);
+} catch (_e) { /* node < 18.13: флага нет, ipv4first уже достаточен */ }
+
 const { loadConfig } = require('./src/config');
 const { createLogger } = require('./src/logger');
 const { connectDb, dbState, disconnectDb } = require('./src/db');

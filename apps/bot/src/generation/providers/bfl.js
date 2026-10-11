@@ -60,8 +60,22 @@ class BflProvider {
     };
   }
 
+  // Сетевые сбои fetch (ECONNRESET/ETIMEDOUT/DNS) приходят как TypeError без кода —
+  // оборачиваем в retryable 'network', иначе автоповтор не сработает
+  async safeFetch(url, init = {}) {
+    try {
+      return await this.fetchImpl(url, init);
+    } catch (error) {
+      if (error && (error.name === 'AbortError' || error.code === 'ABORT_ERR')) {
+        throw abortError();
+      }
+      const cause = error && error.cause ? ` (${error.cause.code || error.cause.message || ''})` : '';
+      throw Object.assign(new Error(`bfl network error${cause}: ${error.message}`), { code: 'network' });
+    }
+  }
+
   async requestJson(url, init, { signal } = {}) {
-    const response = await this.fetchImpl(url, { ...init, signal });
+    const response = await this.safeFetch(url, { ...init, signal });
     const text = await response.text();
     let body = null;
     try {
@@ -99,7 +113,7 @@ class BflProvider {
 
     const images = [];
     for (const result of results) {
-      const response = await this.fetchImpl(result.sampleUrl, { signal });
+      const response = await this.safeFetch(result.sampleUrl, { signal });
       if (!response.ok) {
         throw Object.assign(new Error(`bfl download http ${response.status}`), { code: 'network' });
       }
