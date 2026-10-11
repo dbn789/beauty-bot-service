@@ -1,0 +1,6 @@
+# Конфиг сборки Amvera для проекта beauty-admin (ветка deploy/admin)
+build:
+  dockerfile: apps/admin/Dockerfile
+
+run:
+  containerPort: 3000
