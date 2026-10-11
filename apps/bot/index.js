@@ -70,14 +70,36 @@ const bootstrap = async () => {
 
   let bot = null;
   if (config.botToken && dbConnected) {
+    // Нестабильный маршрут к api.telegram.org не должен валить процесс:
+    // ждём доступности (getMe), выходим только на неверный токен
+    for (;;) {
+      try {
+        const response = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`);
+        if (response.ok) break;
+        if (response.status === 401 || response.status === 404) {
+          logger.error({ status: response.status }, 'BOT_TOKEN is invalid: exiting');
+          process.exit(1);
+        }
+        logger.warn({ status: response.status }, 'telegram getMe non-ok, retry in 15s');
+      } catch (error) {
+        logger.warn({ err: error.message }, 'telegram unreachable, retry in 15s');
+      }
+      await delay(15000);
+    }
+
     bot = createBot({ token: config.botToken, logger, config, models, storage, generation, retention });
-    await bot.telegram.setMyCommands([
-      { command: 'start', description: 'Подобрать причёску' },
-      { command: 'help', description: 'Справка' },
-      { command: 'privacy', description: 'Правила обработки фото' },
-      { command: 'delete_my_data', description: 'Удалить мои данные' },
-      { command: 'cancel', description: 'Отменить подбор' },
-    ]);
+    try {
+      await bot.telegram.setMyCommands([
+        { command: 'start', description: 'Подобрать причёску' },
+        { command: 'help', description: 'Справка' },
+        { command: 'privacy', description: 'Правила обработки фото' },
+        { command: 'delete_my_data', description: 'Удалить мои данные' },
+        { command: 'cancel', description: 'Отменить подбор' },
+      ]);
+    } catch (error) {
+      // меню команд — косметика; нестабильный маршрут к Telegram не должен валить бот
+      logger.warn({ err: error.message }, 'setMyCommands failed (non-fatal)');
+    }
     bot.launch().catch((error) => {
       // неверный токен / 409 (второй polling-инстанс) — падаем явно, с причиной в логе
       logger.error({ err: error.message }, 'bot launch failed');
