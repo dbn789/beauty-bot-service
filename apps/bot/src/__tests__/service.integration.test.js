@@ -193,6 +193,21 @@ describe('S2: суточный лимит (FR-B-080)', () => {
     expect(second.limited).toBe(true);
     expect(second.requestId).toBeUndefined();
   });
+
+  test('выполняющийся запрос списывается из лимита: обход через /cancel закрыт (308372d риск 1)', async () => {
+    const provider = new MockProvider({ delayMs: 250 });
+    const service = makeService({ provider, config: { dailyLimit: 1 } });
+    const user = await makeUser();
+    const photo = await seedPhoto(user);
+
+    const first = await service.submitRequest({ user, photo, source: 'free_text', userText: 'a' });
+    expect(first.promise).toBeDefined(); // queued/processing — уже списан
+
+    const second = await service.submitRequest({ user, photo, source: 'free_text', userText: 'b' });
+    expect(second.limited).toBe(true);
+
+    expect((await first.promise).ok).toBe(true);
+  });
 });
 
 describe('S4: дневной бюджет-стоп (FR-G-080)', () => {
@@ -235,7 +250,8 @@ describe('S4: дневной бюджет-стоп (FR-G-080)', () => {
 describe('queue busy: защита от переполнения очереди', () => {
   test('при полной очереди — busy, без создания нового запроса', async () => {
     const provider = new MockProvider({ delayMs: 250 });
-    const service = makeService({ provider, config: { maxQueueSize: 1 } });
+    // dailyLimit выше числа отправок: проверяем именно очередь, а не лимит
+    const service = makeService({ provider, config: { maxQueueSize: 1, dailyLimit: 10 } });
     const user = await makeUser();
     const photo = await seedPhoto(user);
 

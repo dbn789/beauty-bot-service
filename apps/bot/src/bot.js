@@ -26,6 +26,8 @@ const presetTitle = (code) => {
 
 const createBot = ({ token, logger, config, models, storage, generation, retention }) => {
   const bot = new Telegraf(token);
+  // активные фоновые трекинги — shutdown ждёт их вместе с очередью (ревью 308372d, риск 2)
+  bot.activeTracking = new Set();
 
   const getOrCreateUser = (ctx) =>
     models.User.findOneAndUpdate(
@@ -158,14 +160,29 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
     const statusText = title
       ? texts.generatingFor.replace('{title}', title)
       : texts.generating.replace('{variants}', config.variants);
-    const statusMessage = await ctx.reply(statusText);
+    let statusMessageId;
+    try {
+      const statusMessage = await ctx.reply(statusText);
+      statusMessageId = statusMessage.message_id;
+    } catch (error) {
+      // пользователь заблокировал бота / сетевой сбой: без статусного сообщения
+      // трекингу некуда писать — снимаем шаг, иначе зависнем в processing
+      // (ревью 308372d, риск 8)
+      logger.warn({ err: error.message, userId: String(user._id) }, 'status reply failed');
+      await finishStep(user._id);
+      return;
+    }
     const ticker = setInterval(() => {
       bot.telegram.sendChatAction(chatId, 'upload_photo').catch(() => {});
     }, 5000);
 
-    runTracking(chatId, statusMessage.message_id, claimed, { source, preset, userText, photo: photoMeta })
+    const tracking = runTracking(chatId, statusMessageId, claimed, { source, preset, userText, photo: photoMeta })
       .catch((error) => logger.error({ err: error.message }, 'runTracking crashed'))
-      .finally(() => clearInterval(ticker));
+      .finally(() => {
+        clearInterval(ticker);
+        bot.activeTracking.delete(tracking);
+      });
+    bot.activeTracking.add(tracking);
   };
 
   const downloadPhoto = async (ctx, meta) => {
@@ -314,7 +331,8 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
   bot.action('act:retry', async (ctx) => {
     await answerCb(ctx);
     const user = await getOrCreateUser(ctx);
-    const last = await generation.lastDoneRequest(user._id);
+    // повторяем последний актуальный запрос (в т.ч. упавший), а не последний успешный
+    const last = await generation.lastRetryableRequest(user._id);
     if (!last) {
       await setStep(user._id, DIALOG_STEP.AWAIT_CHOICE);
       await ctx.editMessageText(texts.askChoice, keyboards.buildCategoriesKeyboard());

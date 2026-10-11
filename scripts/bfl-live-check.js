@@ -24,6 +24,22 @@ const main = async () => {
     ...(process.env.BFL_BASE_URL ? { baseUrl: process.env.BFL_BASE_URL } : {}),
   });
 
+  // --probe: бесплатная проверка связности и ключа (GET /credits), без генераций
+  if (process.argv.includes('--probe')) {
+    const t0 = Date.now();
+    try {
+      const credits = await provider.requestJson(`${provider.baseUrl}/credits`, {
+        method: 'GET',
+        headers: provider.headers(false),
+      }, {});
+      console.log(`probe ok: HTTP 200 за ${Date.now() - t0} мс, credits: ${JSON.stringify(credits)}`);
+    } catch (error) {
+      console.error(`probe failed: [${error.code}] ${error.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   const outDir = path.join(__dirname, '..', 'tmp-live');
   fs.mkdirSync(outDir, { recursive: true });
 

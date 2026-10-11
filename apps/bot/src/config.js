@@ -1,5 +1,5 @@
 // Конфигурация контейнера из env с дефолтами из ТЗ (DEFAULTS в @beauty/shared).
-const { DEFAULTS } = require('@beauty/shared');
+const { DEFAULTS, PRICE_TABLE } = require('@beauty/shared');
 
 const int = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
@@ -38,7 +38,14 @@ const loadConfig = (env = process.env) => {
     falApiKey: env.FAL_API_KEY || '',
     // flux-2-pro — рекомендованный BFL дефолт для редактирования ($0.045/вариант),
     // flux-2-klein-9b — бюджетный ($0.015), flux-2-flex/max — по задаче сравнения
-    bflModel: env.BFL_MODEL || 'flux-2-pro',
+    bflModel: (() => {
+      const model = env.BFL_MODEL || 'flux-2-pro';
+      // опечатка в модели молча выключала бы бюджет-стоп (estimateCostUsd → null → 0)
+      if (env.GENERATION_PROVIDER === 'bfl' && !PRICE_TABLE.bfl[model]) {
+        throw new Error(`BFL_MODEL "${model}" is unknown; valid: ${Object.keys(PRICE_TABLE.bfl).join(', ')}`);
+      }
+      return model;
+    })(),
     // глобальный api.bfl.ai из некоторых сетей не отвечает (DPI/Azure Front Door):
     // тогда используем региональный, например https://api.eu.bfl.ai/v1
     bflBaseUrl: env.BFL_BASE_URL || '',

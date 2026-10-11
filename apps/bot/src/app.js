@@ -2,7 +2,7 @@
 const express = require('express');
 const { version } = require('../package.json');
 
-const createApp = ({ logger, dbState = () => 'unknown', provider = null } = {}) => {
+const createApp = ({ logger, dbState = () => 'unknown', provider = null, botReady = () => true } = {}) => {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
@@ -10,12 +10,16 @@ const createApp = ({ logger, dbState = () => 'unknown', provider = null } = {}) 
   app.get('/health', (_req, res) => {
     const db = dbState();
     // 503 при деградации: пробы платформы (Amvera) перезапустят контейнер,
-    // а не будут считать «живой» болванку без БД (ревью 3e35882, риск 7)
-    res.status(db === 'ok' ? 200 : 503).json({
-      status: db === 'ok' ? 'ok' : 'degraded',
+    // а не будут считать «живой» болванку без БД или без подключённого Telegram
+    // (ревью 3e35882 риск 7, eebdcf8 риск 1)
+    const telegramOk = botReady();
+    const ok = db === 'ok' && telegramOk;
+    res.status(ok ? 200 : 503).json({
+      status: ok ? 'ok' : 'degraded',
       app: 'beauty-bot',
       version,
       db,
+      telegram: telegramOk ? 'ok' : 'waiting',
       provider,
       ts: new Date().toISOString(),
     });

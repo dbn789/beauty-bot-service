@@ -13,7 +13,8 @@ const {
 } = require('@beauty/shared');
 
 // Таймаут с реальной отменой: AbortSignal уходит провайдеру (fetch прерывается),
-// гонка страхует от провайдеров, которые сигнал игнорируют (ревью 3e35882, риск 4).
+// гонка страхует от провайдеров, которые сигнал игнорируют. abort() в finally
+// гасит и «осиротевшие» polling-циклы после успеха (ревью 2c82805, риск 6).
 const runWithTimeout = async (fn, ms) => {
   const controller = new AbortController();
   let timer;
@@ -29,6 +30,7 @@ const runWithTimeout = async (fn, ms) => {
     return await Promise.race([fn(controller.signal), timeout]);
   } finally {
     clearTimeout(timer);
+    controller.abort();
   }
 };
 
@@ -54,9 +56,13 @@ const createGenerationService = ({
     return rows.length ? rows[0].spent : 0;
   };
 
-  const countDoneToday = (userId, day) =>
+  // FR-B-080 c учётом обхода через /cancel (ревью 308372d, риск 1):
+  // списываются успешные И находящиеся в работе запросы; error не списывается
+  const countAccountedToday = (userId, day) =>
     models.GenerationRequest.countDocuments({
-      userId, day, status: REQUEST_STATUS.DONE,
+      userId,
+      day,
+      status: { $in: [REQUEST_STATUS.DONE, REQUEST_STATUS.QUEUED, REQUEST_STATUS.PROCESSING] },
     });
 
   // Оценочная стоимость очереди (queued/processing) — чтобы параллельные отправки
@@ -71,9 +77,9 @@ const createGenerationService = ({
    * @returns {Promise<{limited|busy|budgetStopped|invalidPhoto|requestId|promise}>}
    */
   const submitRequest = async ({ user, photo, source, preset = null, userText = null, day = dayKey() }) => {
-    // FR-B-080: суточный лимит (считаем успешные генерации)
-    const doneToday = await countDoneToday(user._id, day);
-    if (doneToday >= config.dailyLimit) {
+    // FR-B-080: суточный лимит (успешные + в работе, чтобы /cancel не открывал обход)
+    const accountedToday = await countAccountedToday(user._id, day);
+    if (accountedToday >= config.dailyLimit) {
       return { limited: true };
     }
 
@@ -232,6 +238,13 @@ const createGenerationService = ({
     request.durationMs = Date.now() - startedAt;
     await request.save();
     logger.error({ requestId, err: request.error }, 'generation failed');
+    // 402/401 — деньги или ключ: все клиенты будут падать, салон должен узнать сразу
+    if (['provider_credits', 'provider_auth'].includes(request.error.code)) {
+      logger.error(
+        { requestId, code: request.error.code },
+        'OPERATIONAL ALERT: bfl credits exhausted or api key invalid — generation will keep failing until fixed'
+      );
+    }
     return { ok: false, request };
   };
 
@@ -271,11 +284,19 @@ const createGenerationService = ({
   const lastDoneRequest = (userId) =>
     models.GenerationRequest.findOne({ userId, status: REQUEST_STATUS.DONE }).sort({ createdAt: -1 });
 
+  // Для «Повторить» после ошибки (ревью 308372d, риск 7): последний актуальный
+  // запрос пользователя — включая упавший, а не только успешный
+  const lastRetryableRequest = (userId) =>
+    models.GenerationRequest
+      .findOne({ userId, deletedAt: null, status: { $ne: REQUEST_STATUS.BUDGET_STOPPED } })
+      .sort({ createdAt: -1 });
+
   return {
     submitRequest,
     processRequest,
     recoverInterrupted,
     lastDoneRequest,
+    lastRetryableRequest,
     spentTodayUsd,
   };
 };

@@ -18,25 +18,48 @@ const binaryResponse = (buffer) => ({
   arrayBuffer: async () => buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
 });
 
-// Собирает fetch, отвечающий по сценариям на POST /model, GET polling, GET sample
-const makeFetch = ({ submits = [], polls = [], downloadError, submitStatus = 200 } = {}) => {
+// Собирает fetch, отвечающий по сценариям на POST /model, GET polling, GET sample.
+// Опции: pollFlakes (номера опросов, бросающие сетевую ошибку), failSubmitIndexes
+// (номера POST, всегда 503), textError (response.text() бросает — обрыв тела).
+const makeFetch = ({
+  submits = [],
+  polls = [],
+  downloadError,
+  submitStatus = 200,
+  pollFlakes = [],
+  failSubmitIndexes = [],
+  textError = false,
+} = {}) => {
   const submitted = [];
   const pollLog = [];
   const pollsQueue = [...polls];
+  let pollNumber = 0;
   return {
     submitted,
     pollLog,
     fetchImpl: async (url, init = {}) => {
       if (init.method === 'POST') {
         submitted.push(JSON.parse(init.body));
+        if (failSubmitIndexes.includes(submitted.length)) {
+          return jsonResponse(503, { detail: 'submit boom' });
+        }
         return jsonResponse(submitStatus, submits.shift() || {
           id: `task-${submitted.length}`,
           polling_url: `${BASE}/get_result?id=${submitted.length}`,
         });
       }
       if (url.startsWith(`${BASE}/get_result`)) {
+        pollNumber += 1;
+        if (pollFlakes.includes(pollNumber)) {
+          const error = new TypeError('fetch failed');
+          error.cause = { code: 'UND_ERR_SOCKET' };
+          throw error;
+        }
         const next = pollsQueue.shift() || { status: 'Ready', id: 'task-1', result: { sample: 'https://delivery.bfl.ai/x.png' } };
         pollLog.push(next.status);
+        if (textError) {
+          return { ok: true, status: 200, text: async () => { throw new TypeError('terminated'); } };
+        }
         return jsonResponse(200, next);
       }
       if (url.startsWith('https://delivery')) {
@@ -83,6 +106,9 @@ describe('BflProvider: happy path', () => {
     expect(harness.submitted).toHaveLength(2);
     expect(harness.submitted[0].prompt).toContain('bob');
     expect(harness.submitted[0].input_image).toMatch(/^data:image\/png;base64,/);
+    // размеры выхода прокинуты, кратны 32 (кап цены за мегапиксель)
+    expect(harness.submitted[0].width % 32).toBe(0);
+    expect(harness.submitted[0].height % 32).toBe(0);
   });
 
   test('x-key прокидывается в заголовки', async () => {
@@ -123,6 +149,60 @@ describe('BflProvider: ошибки и классификация', () => {
     });
     await expect(
       makeProvider(harness.fetchImpl).generate({ imageBuffer: png, prompt: 'p', variants: 1 })
+    ).rejects.toMatchObject({ code: 'provider_error' });
+  });
+
+  test('модерация отклонила задачу → provider_moderated, без повторов (риск 2)', async () => {
+    const harness = makeFetch({
+      polls: [{ status: 'Content Moderated', id: 't' }],
+    });
+    const error = await makeProvider(harness.fetchImpl)
+      .generate({ imageBuffer: png, prompt: 'p', variants: 1 })
+      .catch((e) => e);
+    expect(error.code).toBe('provider_moderated');
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  test('POST 400 (наша ошибка) → provider_client, non-retryable (риск 3)', async () => {
+    const harness = makeFetch({ submitStatus: 400 });
+    const error = await makeProvider(harness.fetchImpl)
+      .generate({ imageBuffer: png, prompt: 'p', variants: 1 })
+      .catch((e) => e);
+    expect(error.code).toBe('provider_client');
+    expect(isRetryableError(error)).toBe(false);
+  });
+
+  test('обрыв чтения тела (TypeError: terminated) → network, retryable (3a7de2d риск 2)', async () => {
+    const harness = makeFetch({ textError: true });
+    const error = await makeProvider(harness.fetchImpl)
+      .generate({ imageBuffer: png, prompt: 'p', variants: 1 })
+      .catch((e) => e);
+    expect(error.code).toBe('network');
+    expect(isRetryableError(error)).toBe(true);
+  });
+
+  test('сетевой сбой одного опроса — ретрай внутри, БЕЗ ре-сабмита задач (двойная оплата)', async () => {
+    const harness = makeFetch({ pollFlakes: [1] });
+    const result = await makeProvider(harness.fetchImpl).generate({
+      imageBuffer: png, prompt: 'p', variants: 3,
+    });
+    expect(result.images).toHaveLength(3);
+    expect(harness.submitted).toHaveLength(3); // не 6 — задачи не отправляются заново
+  });
+
+  test('один вариант упал на submit — остальные выжили, ре-сабмита нет (риск 1)', async () => {
+    const harness = makeFetch({ failSubmitIndexes: [2] });
+    const result = await makeProvider(harness.fetchImpl).generate({
+      imageBuffer: png, prompt: 'p', variants: 3,
+    });
+    expect(result.images).toHaveLength(2);
+    expect(harness.submitted).toHaveLength(3);
+  });
+
+  test('не выжил ни один вариант — бросается ошибка первого варианта', async () => {
+    const harness = makeFetch({ submitStatus: 503 });
+    await expect(
+      makeProvider(harness.fetchImpl).generate({ imageBuffer: png, prompt: 'p', variants: 2 })
     ).rejects.toMatchObject({ code: 'provider_error' });
   });
 

@@ -8,7 +8,7 @@ const { User, GenerationRequest } = require('@beauty/shared');
 require('dns').setDefaultResultOrder('ipv4first');
 try {
   require('net').setDefaultAutoSelectFamily(true);
-} catch (_e) { /* node < 18.13: флага нет, ipv4first уже достаточен */ }
+} catch (_e) { /* node < 18.18: метода нет, ipv4first уже достаточно */ }
 
 const { loadConfig } = require('./src/config');
 const { createLogger } = require('./src/logger');
@@ -22,22 +22,25 @@ const { getProvider } = require('./src/generation/providers');
 const { LimiterQueue } = require('./src/generation/queue');
 const { createGenerationService } = require('./src/generation/service');
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const bootstrap = async () => {
   const config = loadConfig();
   const logger = createLogger({ env: config.env });
   const models = { User, GenerationRequest };
+  const runtime = { botReady: false };
 
-  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  // Ждём завершения генераций в работе (до timeoutMs), чтобы деплой не ронял
-  // живые запросы (ревью 3e35882, риск 3)
-  const drainQueue = async (queue, timeoutMs) => {
+  // Ждём завершения генераций в работе и их отправки клиентам (до timeoutMs),
+  // чтобы деплой не ронял готовые результаты (ревью 308372d, риск 2)
+  const drainQueue = async (queue, bot, timeoutMs) => {
     const deadline = Date.now() + timeoutMs;
-    while (queue.busy && Date.now() < deadline) {
+    const pending = () => queue.busy || (bot && bot.activeTracking && bot.activeTracking.size > 0);
+    while (pending() && Date.now() < deadline) {
       await delay(500);
     }
-    return !queue.busy;
+    return !pending();
   };
+
   const storage = createFileStorage({ dataDir: config.dataDir, logger });
   await storage.init();
 
@@ -49,12 +52,13 @@ const bootstrap = async () => {
   }
   const dbConnected = Boolean(connection);
 
-  const provider = getProvider(config.generationProvider, {
-    delayMs: config.mockDelayMs,
-    apiKey: config.bflApiKey || config.falApiKey,
-    model: config.bflModel,
-    bflBaseUrl: config.bflBaseUrl || undefined,
-  });
+  // ключ строго своего провайдера (ревью 2c82805, риск 7: fal не должен получить ключ bfl)
+  const providerOptions = {
+    bfl: { apiKey: config.bflApiKey, model: config.bflModel, bflBaseUrl: config.bflBaseUrl || undefined },
+    fal: { apiKey: config.falApiKey },
+    mock: { delayMs: config.mockDelayMs },
+  }[config.generationProvider];
+  const provider = getProvider(config.generationProvider, providerOptions);
   logger.info({ provider: provider.name, model: provider.model }, 'generation provider selected');
 
   const queue = new LimiterQueue({ concurrency: config.generationConcurrency });
@@ -63,19 +67,43 @@ const bootstrap = async () => {
   });
   const retention = createRetention({ models, storage, config, logger });
 
-  const app = createApp({ logger, dbState, provider: provider.name });
+  const app = createApp({
+    logger,
+    dbState,
+    provider: provider.name,
+    // /health честен про «бот не подключён» (ревью eebdcf8, риск 1: тихий живой труп)
+    botReady: () => runtime.botReady || !config.botToken,
+  });
   const server = app.listen(config.internalApiPort, () => {
     logger.info({ port: config.internalApiPort }, 'internal api started');
   });
 
+  // S7-восстановление и ретеншн не зависят от Telegram — запускаем сразу,
+  // не дожидаясь доступности API (ревью eebdcf8, риск 3)
+  let affectedUserIds = [];
+  if (dbConnected) {
+    affectedUserIds = await generation.recoverInterrupted();
+    retention.start(); // FR-I-080
+  } else {
+    logger.warn('db not connected: recovery/retention/bot disabled, internal api only');
+  }
+
   let bot = null;
+  let stopping = false;
   if (config.botToken && dbConnected) {
-    // Нестабильный маршрут к api.telegram.org не должен валить процесс:
-    // ждём доступности (getMe), выходим только на неверный токен
+    // Pre-flight через undici-fetch с таймаутом: ждём доступности Telegram,
+    // выходим только на неверный токен. getMe заполняет botInfo — launch()
+    // не будет дёргать его повторно (ревью eebdcf8, риски 2 и 7)
     for (;;) {
       try {
-        const response = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`);
-        if (response.ok) break;
+        const response = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        if (response.ok) {
+          bot = createBot({ token: config.botToken, logger, config, models, storage, generation, retention });
+          bot.botInfo = await response.json().then((body) => body.result);
+          break;
+        }
         if (response.status === 401 || response.status === 404) {
           logger.error({ status: response.status }, 'BOT_TOKEN is invalid: exiting');
           process.exit(1);
@@ -87,7 +115,6 @@ const bootstrap = async () => {
       await delay(15000);
     }
 
-    bot = createBot({ token: config.botToken, logger, config, models, storage, generation, retention });
     try {
       await bot.telegram.setMyCommands([
         { command: 'start', description: 'Подобрать причёску' },
@@ -100,21 +127,29 @@ const bootstrap = async () => {
       // меню команд — косметика; нестабильный маршрут к Telegram не должен валить бот
       logger.warn({ err: error.message }, 'setMyCommands failed (non-fatal)');
     }
-    bot.launch().catch((error) => {
-      // неверный токен / 409 (второй polling-инстанс) — падаем явно, с причиной в логе
-      logger.error({ err: error.message }, 'bot launch failed');
-      process.exit(1);
-    });
-    logger.info('bot launched (polling)');
-  } else if (!config.botToken) {
-    logger.warn('BOT_TOKEN is not set: bot not launched, internal api only');
-  }
 
-  if (dbConnected) {
-    // S7: восстановление + уведомление пострадавших клиентов (бот уже создан)
-    const affectedUserIds = await generation.recoverInterrupted();
+    // launch() резолвится только при остановке; сетевые сбои старта — повторяем,
+    // неверный токен/409 (второй polling-инстанс) — выходим, пусть платформа рестартует
+    const startPolling = () => {
+      bot.launch().then(() => {
+        logger.info('polling stopped');
+      }).catch(async (error) => {
+        const message = String((error && error.message) || error);
+        if (/401|404|409|Conflict/i.test(message)) {
+          logger.error({ err: message }, 'bot launch failed fatally: exiting');
+          process.exit(1);
+        }
+        logger.warn({ err: message }, 'bot launch failed, retry in 15s');
+        await delay(15000);
+        if (!stopping) startPolling();
+      });
+      runtime.botReady = true;
+      logger.info('bot launched (polling)');
+    };
+    startPolling();
+
+    // уведомления пострадавшим о прерванных рестартом генерациях (S7)
     for (const userId of affectedUserIds) {
-      if (!bot) break;
       try {
         const user = await models.User.findById(userId);
         if (user) {
@@ -124,16 +159,22 @@ const bootstrap = async () => {
         logger.warn({ userId, err: error.message }, 'recovery notify failed');
       }
     }
-    retention.start(); // FR-I-080
-  } else {
-    logger.warn('db not connected: recovery/retention/bot disabled, internal api only');
+  } else if (!config.botToken) {
+    runtime.botReady = true; // режим «только internal api» — деградацией не считается
+    logger.warn('BOT_TOKEN is not set: bot not launched, internal api only');
   }
 
   const shutdown = (signal) => async () => {
+    if (stopping) return;
+    stopping = true;
     logger.info({ signal }, 'shutdown');
     retention.stop();
-    if (bot) bot.stop(signal);
-    const drained = await drainQueue(queue, 30000);
+    if (bot) {
+      try {
+        bot.stop(signal);
+      } catch (_e) { /* polling ещё не создан — останавливать нечего */ }
+    }
+    const drained = await drainQueue(queue, bot, 30000);
     logger.info({ drained }, 'queue drain finished');
     server.close(() => process.exit(0));
     try {
