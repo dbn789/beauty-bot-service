@@ -1,5 +1,6 @@
 # Контейнер beauty-admin (ТЗ 7.4). Контекст сборки — корень монорепо.
-FROM node:22-slim
+# node:22-slim в harbor.waw0 отдаёт битый слой (unexpected EOF). Alpine — другой образ.
+FROM node:22-alpine
 
 WORKDIR /app
 
