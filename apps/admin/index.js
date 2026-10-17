@@ -1,7 +1,7 @@
 // Точка входа контейнера beauty-admin: конфиг, mongo, bootstrap админа, listen.
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-const { AdminUser, User: BotUser, GenerationRequest } = require('@beauty/shared');
+const { AdminUser, User: BotUser, GenerationRequest, Setting } = require('@beauty/shared');
 const { createSession } = require('./helpers/session');
 const { createBotApiClient } = require('./helpers/botApiClient');
 const { createAdminApp } = require('./src/app');
@@ -46,7 +46,7 @@ const start = async () => {
   const app = createAdminApp({
     session: createSession(config.sessionSecret || 'development-secret-not-for-prod'),
     bot: createBotApiClient({ baseUrl: config.botUrl, apiKey: config.botKey }),
-    models: { AdminUser, BotUser, GenerationRequest },
+    models: { AdminUser, BotUser, GenerationRequest, Setting },
     config: { ...config, dbState: () => (mongoose.connection.readyState === 1 ? 'ok' : 'disconnected') },
     logger: { error: (extra, msg) => bootLog(50, msg, extra) },
   });

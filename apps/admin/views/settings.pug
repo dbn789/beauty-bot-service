@@ -1,0 +1,23 @@
+extends layout
+
+block content
+  h1 Настройки
+  .subtabs
+    each s in sections
+      a(href=`/settings/${s.key}` class=(section === s.key ? 'active' : ''))= s.title
+
+  .settings-card
+    if saved
+      p.ok ✅ Сохранено
+    h2= current.title
+    p.muted= current.hint
+
+    h3 Запланировано на следующих шагах
+    ul.planned
+      each item in current.planned
+        li= item
+
+    form.notes-form(method="post" action=`/settings/${section}`)
+      label Заметка раздела (работает уже сейчас)
+      textarea(name="notes" rows="3" placeholder="Например: согласовать тексты с администратором салона")= notes
+      button(type="submit") Сохранить заметку

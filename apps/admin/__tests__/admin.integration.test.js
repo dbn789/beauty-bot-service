@@ -4,7 +4,7 @@ process.env.LOG_LEVEL = 'silent';
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const bcrypt = require('bcryptjs');
-const { AdminUser, User: BotUser, GenerationRequest } = require('@beauty/shared');
+const { AdminUser, User: BotUser, GenerationRequest, Setting } = require('@beauty/shared');
 const { createSession } = require('../helpers/session');
 const { createAdminApp } = require('../src/app');
 
@@ -57,7 +57,7 @@ beforeAll(async () => {
   const app = createAdminApp({
     session: createSession('test-secret-at-least-16-chars'),
     bot: fakeBot,
-    models: { AdminUser, BotUser, GenerationRequest },
+    models: { AdminUser, BotUser, GenerationRequest, Setting },
     config: { env: 'development', dbState: () => 'ok' },
     logger,
   });
@@ -142,6 +142,47 @@ describe('страницы под сессией', () => {
   test('о сервисе показывает meta бота (FR-A-070)', async () => {
     const html = await (await authed('/about')).text();
     expect(html.includes('flux-2-pro')).toBe(true);
+  });
+
+  describe('настройки: каркас с подтабами', () => {
+    test('/settings редиректит на первый раздел', async () => {
+      const response = await authed('/settings', { redirect: 'manual' });
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toBe('/settings/bot');
+    });
+
+    test('все четыре подтаба открываются с планом раздела', async () => {
+      for (const section of ['users', 'bot', 'generation', 'stand']) {
+        const response = await authed(`/settings/${section}`);
+        expect(response.status).toBe(200);
+        const html = await response.text();
+        expect(html.includes('Запланировано')).toBe(true);
+        expect(html.includes('Сохранить заметку')).toBe(true);
+      }
+    });
+
+    test('несуществующий раздел — 404', async () => {
+      expect((await authed('/settings/nope')).status).toBe(404);
+    });
+
+    test('заметка сохраняется и возвращается (round-trip через БД)', async () => {
+      const post = await fetch(`${baseUrl}/settings/stand`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'notes=проверить регион перед боевым запуском',
+      });
+      expect(post.status).toBe(302);
+      expect(post.headers.get('location')).toBe('/settings/stand?saved=1');
+
+      const html = await (await authed('/settings/stand?saved=1')).text();
+      expect(html.includes('✅ Сохранено')).toBe(true);
+      expect(html.includes('проверить регион перед боевым запуском')).toBe(true);
+
+      const doc = await Setting.findOne({ section: 'stand' }).lean();
+      expect(doc.data.notes).toBe('проверить регион перед боевым запуском');
+      expect(doc.updatedBy).toBe('boss');
+    });
   });
 
   test('logout чистит сессию', async () => {

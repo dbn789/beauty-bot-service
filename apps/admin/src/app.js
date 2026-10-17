@@ -3,14 +3,56 @@
 const path = require('path');
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const { PRESETS_CATALOG, moscowDayKey } = require('@beauty/shared');
+const { PRESETS_CATALOG, moscowDayKey, SETTINGS_SECTIONS } = require('@beauty/shared');
 const { version } = require('../package.json');
 
 const SESSION_COOKIE = 'beauty_session';
 const SESSION_TTL_MS = 12 * 3600 * 1000; // FR-A-020: 12 часов
 
+// Каркас настроек (заказ: таб «Настройки» с подтабами). Содержимое разделов
+// наполняется поэтапно; пока в каждом — план и рабочая заметка администратора.
+const SETTINGS_META = {
+  users: {
+    title: 'Пользователи',
+    hint: 'Администраторы, клиенты и их лимиты',
+    planned: [
+      'Учётные записи администраторов: создание и смена пароля',
+      'Индивидуальные лимиты генераций клиенту',
+      'Блокировка клиентов',
+    ],
+  },
+  bot: {
+    title: 'Бот',
+    hint: 'Тексты и поведение бота',
+    planned: [
+      'Приветствие и тексты сообщений',
+      'Текст правил обработки фото (/privacy)',
+      'Каталог пресетов: включение/выключение, порядок, названия',
+    ],
+  },
+  generation: {
+    title: 'Генерация',
+    hint: 'Провайдер и ограничения',
+    planned: [
+      'Модель FLUX.2 и число вариантов',
+      'Дневной лимит генераций на пользователя',
+      'Дневной бюджет $ и таймаут',
+      'Срок хранения фото (ретеншн)',
+    ],
+  },
+  stand: {
+    title: 'Стенд',
+    hint: 'Инфраструктура и статус сервисов',
+    planned: [
+      'Статус сервисов и версии (бот/админка/БД)',
+      'Регион и внутренние адреса (только чтение)',
+      'Обзор переменных окружения без секретов (только чтение)',
+    ],
+  },
+};
+
 const createAdminApp = ({ session, bot, models, config, logger, startedAt = Date.now() } = {}) => {
-  const { AdminUser, BotUser, GenerationRequest } = models;
+  const { AdminUser, BotUser, GenerationRequest, Setting } = models;
   const isProduction = config.env === 'production';
 
   const app = express();
@@ -107,6 +149,33 @@ const createAdminApp = ({ session, bot, models, config, logger, startedAt = Date
     ]);
     const recentMap = new Map(recent.map((row) => [String(row._id), row.count]));
     res.render('users', { title: 'Пользователи', users, recentMap });
+  });
+
+  // ── настройки (каркас: подтабы + заметка; содержимое — поэтапно) ─────────
+  app.get('/settings', (_req, res) => res.redirect('/settings/bot'));
+
+  app.get('/settings/:section', async (req, res, next) => {
+    if (!SETTINGS_SECTIONS.includes(req.params.section)) return next();
+    const doc = await Setting.findOne({ section: req.params.section }).lean();
+    res.render('settings', {
+      title: `Настройки · ${SETTINGS_META[req.params.section].title}`,
+      sections: SETTINGS_SECTIONS.map((key) => ({ key, title: SETTINGS_META[key].title })),
+      section: req.params.section,
+      current: SETTINGS_META[req.params.section],
+      notes: (doc && doc.data && doc.data.notes) || '',
+      saved: req.query.saved === '1',
+    });
+  });
+
+  app.post('/settings/:section', async (req, res, next) => {
+    if (!SETTINGS_SECTIONS.includes(req.params.section)) return next();
+    const notes = String(req.body.notes || '').slice(0, 2000);
+    await Setting.updateOne(
+      { section: req.params.section },
+      { $set: { data: { notes }, updatedBy: res.locals.adminLogin } },
+      { upsert: true }
+    );
+    res.redirect(`/settings/${req.params.section}?saved=1`);
   });
 
   // ── о сервисе (FR-A-070) ──────────────────────────────────────────────────

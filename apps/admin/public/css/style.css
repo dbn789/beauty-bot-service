@@ -146,5 +146,32 @@ h2 { font-size: 17px; margin: 24px 0 10px; }
 .login-card button:hover { background: var(--accent-dark); }
 .login-card .error { color: var(--error); margin: 4px 0; font-size: 14px; }
 
+/* ── настройки ── */
+.subtabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.subtabs a {
+  padding: 6px 14px; border-radius: 8px; text-decoration: none;
+  color: var(--muted); background: var(--card); border: 1px solid var(--line);
+}
+.subtabs a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.subtabs a:hover:not(.active) { color: var(--accent-dark); }
+
+.settings-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.settings-card h2 { margin: 0 0 4px; }
+.settings-card h3 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 8px; }
+ul.planned { margin: 0; padding-left: 18px; color: var(--muted); }
+ul.planned li { margin: 4px 0; }
+
+.notes-form { margin-top: 20px; display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+.notes-form label { font-size: 13px; color: var(--muted); }
+.notes-form textarea {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; resize: vertical;
+}
+.notes-form button {
+  align-self: flex-start; padding: 8px 18px; border: 0; border-radius: 8px;
+  background: var(--accent); color: #fff; cursor: pointer;
+}
+.notes-form button:hover { background: var(--accent-dark); }
+.ok { color: var(--ok); margin: 0 0 8px; }
+
 /* ── о сервисе ── */
 .table.about td:first-child { color: var(--muted); width: 40%; }
