@@ -6,7 +6,7 @@
 
 | | |
 |---|---|
-| **Статус** | Э0–Э1 завершены (каркас + бот MVP на mock) · далее Э2 — интеграция FLUX.2 |
+| **Статус** | Э0–Э3 завершены (прод на Amvera waw0, генерации работают) · далее Э4 — админка (auth, статистика) |
 | **ТЗ** | [docs/technical-spec.md](docs/technical-spec.md) |
 | **Код** | `apps/bot`, `apps/admin`, `packages/shared`, `scripts/` |
 | **Платформа** | Amvera Cloud: 2 docker-проекта (бот, админка) + managed MongoDB |

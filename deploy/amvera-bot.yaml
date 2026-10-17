@@ -1,10 +1,13 @@
-# Конфиг сборки Amvera для проекта beauty-bot (кладётся в корень как amvera.yaml
-# на ветке deploy/bot скриптом scripts/amvera-sync.sh)
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+    version: latest
+
 build:
   dockerfile: apps/bot/Dockerfile
+  skip: false
 
 run:
-  # Internal API бота (health-пробы платформы; публичный домен боту не нужен)
   containerPort: 8080
-  # постоянное хранилище для фото (env DATA_DIR=/data в настройках проекта)
   persistenceMount: /data

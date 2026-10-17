@@ -1,6 +1,12 @@
-# Конфиг сборки Amvera для проекта beauty-admin (ветка deploy/admin)
+meta:
+  environment: docker
+  toolchain:
+    name: docker
+    version: latest
+
 build:
   dockerfile: apps/admin/Dockerfile
+  skip: false
 
 run:
   containerPort: 3000
