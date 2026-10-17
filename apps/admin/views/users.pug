@@ -1,0 +1,28 @@
+extends layout
+
+block content
+  h1 Пользователи
+  table.table
+    thead
+      tr
+        th Telegram ID
+        th Имя
+        th Username
+        th Начал
+        th Согласие
+        th Генераций всего
+        th За 30 дней
+        th Данные удалены
+    tbody
+      each user in users
+        tr
+          td= user.tgId
+          td= user.firstName || '—'
+          td= user.username ? '@' + user.username : '—'
+          td= user.createdAt ? new Date(user.createdAt).toLocaleDateString('ru-RU') : '—'
+          td= user.privacyAcceptedAt ? '✅' : '—'
+          td= user.generationsTotal || 0
+          td= recentMap.get(String(user._id)) || 0
+          td= user.dataDeletedAt ? new Date(user.dataDeletedAt).toLocaleDateString('ru-RU') : ''
+  if !users.length
+    p.muted Пока нет пользователей.

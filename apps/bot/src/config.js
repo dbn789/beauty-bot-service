@@ -58,6 +58,9 @@ const loadConfig = (env = process.env) => {
     retentionDays: int(env.RETENTION_DAYS, DEFAULTS.RETENTION_DAYS),
     mockDelayMs: int(env.MOCK_DELAY_MS, 1500),
     maxQueueSize: int(env.MAX_QUEUE_SIZE, 50),
+    // защита маршрутов /api и /files (Internal API для админки, ТЗ FR-I-030);
+    // пусто → маршруты закрыты (fail-closed)
+    internalApiKey: env.INTERNAL_API_KEY || '',
   };
 };
 

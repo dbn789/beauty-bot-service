@@ -1,0 +1,69 @@
+extends layout
+
+block content
+  h1 Генерации
+  if botError
+    p.banner Бот недоступен (#{botError}) — журнал не получен.
+  else if data
+    form.filters(method="get" action="/generations")
+      label Статус
+      select(name="status")
+        option(value="" selected=!filters.status) все
+        each s in ['done', 'error', 'queued', 'processing', 'budget_stopped']
+          option(value=s selected=filters.status === s)= s
+      label С днём
+      input(type="date" name="from" value=filters.from placeholder="YYYY-MM-DD")
+      label по
+      input(type="date" name="to" value=filters.to placeholder="YYYY-MM-DD")
+      button(type="submit") Применить
+
+    p.muted Всего: #{data.total}
+
+    table.table
+      thead
+        tr
+          th Дата
+          th Пользователь
+          th Запрос
+          th Статус
+          th Вариантов
+          th Длительность
+          th Превью
+          th Ошибка
+      tbody
+        each item in data.items
+          tr
+            td= new Date(item.createdAt).toLocaleString('ru-RU')
+            td
+              if item.user
+                = (item.user.firstName || item.user.username || '') + ' '
+                span.muted= item.user.tgId
+              else
+                span.muted —
+            td
+              if item.source === 'preset'
+                = presetTitles[item.presetCode] || item.presetCode
+              else
+                span(title=item.userText) Свой текст
+            td
+              span.badge(class=item.status)= item.status
+            td= item.variantsCount
+            td= item.durationMs ? (item.durationMs / 1000).toFixed(1) + ' с' : '—'
+            td.thumbs
+              if item.deletedAt
+                span.muted удалено
+              else
+                - const vs = Array.from({ length: item.variantsCount }, (_x, i) => i + 1)
+                a(href=`/preview/${item.id}?ref=kind%3Dsource` target="_blank")
+                  img.thumb(src=`/preview/${item.id}?ref=kind%3Dsource` alt="исходник" onerror="this.style.visibility='hidden'")
+                each v in vs
+                  a(href=`/preview/${item.id}?ref=v%3D${v}` target="_blank")
+                    img.thumb(src=`/preview/${item.id}?ref=v%3D${v}` alt="вариант " + v onerror="this.style.visibility='hidden'")
+            td.err= item.error ? (item.error.code + ': ' + (item.error.message || '').slice(0, 80)) : ''
+
+    .pagination
+      if page > 1
+        a(href=`/generations?${queryString(Object.assign({}, filters, { page: page - 1 }))}`) ‹ назад
+      span стр. #{data.page} из #{data.pages}
+      if page < data.pages
+        a(href=`/generations?${queryString(Object.assign({}, filters, { page: page + 1 }))}`) вперед ›

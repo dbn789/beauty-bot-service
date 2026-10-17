@@ -6,4 +6,15 @@ html(lang="ru")
     title= title ? `${title} · Beauty Admin` : 'Beauty Admin'
     link(rel="stylesheet" href="/css/style.css")
   body
-    block content
+    nav.topnav
+      .brand 💇‍♀️ Beauty Admin
+      .links
+        a(href="/dashboard") Дашборд
+        a(href="/generations") Генерации
+        a(href="/users") Пользователи
+        a(href="/about") О сервисе
+      .whoami
+        span= adminLogin || ''
+        a.logout(href="/logout") Выйти
+    main.content
+      block content

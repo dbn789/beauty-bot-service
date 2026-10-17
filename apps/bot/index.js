@@ -73,6 +73,9 @@ const bootstrap = async () => {
     provider: provider.name,
     // /health честен про «бот не подключён» (ревью eebdcf8, риск 1: тихий живой труп)
     botReady: () => runtime.botReady || !config.botToken,
+    config,
+    models,
+    storage,
   });
   const server = app.listen(config.internalApiPort, () => {
     logger.info({ port: config.internalApiPort }, 'internal api started');

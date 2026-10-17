@@ -1,23 +1,73 @@
 extends layout
 
 block content
-  main.dashboard-page
-    header.topbar
-      h1 Дашборд
-      a.logout(href="/login") Выйти
-    section.placeholder
-      p Каркас админки развёрнут (этап Э0).
-      p Статистика, журнал генераций и пользователи появятся на этапе Э4 (ТЗ 5.3).
-      p.health-status
-        | Статус API: 
-        span#api-status проверяю…
-        |  · версия: 
-        span#version —
-    script.
-      fetch('/health')
-        .then((r) => r.json())
-        .then((h) => {
-          document.getElementById('api-status').textContent = h.status;
-          document.getElementById('version').textContent = h.version;
-        })
-        .catch(() => { document.getElementById('api-status').textContent = 'недоступен'; });
+  h1 Дашборд
+  if botError
+    p.banner Бот недоступен (#{botError}) — данные не обновлены. Проверьте, что контейнер beauty-bot работает и ключи INTERNAL_API_KEY совпадают.
+  if stats
+    .period
+      span Период:
+      a(href="/dashboard?days=7" class=(days === 7 ? 'active' : '')) 7 дней
+      a(href="/dashboard?days=30" class=(days === 30 ? 'active' : '')) 30 дней
+
+    .cards
+      .card
+        .value= stats.totals.requests
+        .label генераций
+      .card
+        .value= stats.totals.done
+        .label успешных
+      .card
+        .value= stats.totals.errorRate + '%'
+        .label ошибок (#{stats.totals.errors})
+      .card
+        .value= stats.totals.users
+        .label пользователей
+      .card
+        .value $#{stats.totals.spentUsd}
+        .label расход за период
+
+    .budget
+      | Сегодня израсходовано
+      b  $#{stats.budgetToday.spentUsd}
+      |  из $#{stats.budgetToday.limitUsd} дневного бюджета
+
+    section
+      h2 По дням
+      table.table
+        thead
+          tr
+            th День
+            th Генераций
+            th Успешно
+            th Ошибок
+            th Пользователей
+            th Расход
+        tbody
+          each row in stats.byDay
+            tr
+              td= row.day
+              td
+                .bar(title=row.total + ' генераций')
+                  .bar-fill(style=`width:${row.total ? Math.round(row.total / Math.max(...stats.byDay.map(r => r.total)) * 100) : 0}%`)
+                = row.total
+              td= row.done
+              td= row.error
+              td= row.users
+              td $#{row.spent}
+
+    section
+      h2 Топ стилей
+      if stats.topPresets.length
+        table.table
+          thead
+            tr
+              th Стиль
+              th Выбран раз
+          tbody
+            each preset in stats.topPresets
+              tr
+                td= preset.title
+                td= preset.count
+      else
+        p.muted Пока нет данных.

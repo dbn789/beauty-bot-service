@@ -10,6 +10,7 @@ const {
 const { buildHairstylePrompt, HAIRSTYLE_PROMPT_TEMPLATE } = require('./prompts');
 const { PRESETS_CATALOG } = require('./presets-catalog');
 const { PRICE_TABLE, estimateCostUsd } = require('./pricing');
+const day = require('./day');
 const models = require('./models');
 
 module.exports = {
@@ -25,5 +26,6 @@ module.exports = {
   PRESETS_CATALOG,
   PRICE_TABLE,
   estimateCostUsd,
+  ...day,
   ...models,
 };

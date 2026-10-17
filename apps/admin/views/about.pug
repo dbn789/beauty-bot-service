@@ -1,0 +1,36 @@
+extends layout
+
+block content
+  h1 О сервисе
+  if botError
+    p.banner Бот недоступен (#{botError}) — показаны только данные админки.
+  table.table.about
+    tbody
+      tr
+        td Версия админки
+        td= admin.version
+      tr
+        td Аптайм админки
+        td= Math.floor(admin.uptimeSec / 60) + ' мин'
+      if meta
+        tr
+          td Версия бота
+          td= meta.version
+        tr
+          td Аптайм бота
+          td= Math.floor(meta.uptimeSec / 60) + ' мин'
+        tr
+          td Провайдер / модель
+          td= `${meta.provider} · ${meta.model}`
+        tr
+          td Вариантов за генерацию
+          td= meta.variants
+        tr
+          td Лимит генераций на пользователя
+          td= meta.dailyLimit + ' / день'
+        tr
+          td Дневной бюджет
+          td= '$' + (meta.dailyBudgetUsd || '—')
+        tr
+          td Хранение фото
+          td= meta.retentionDays + ' дней'
