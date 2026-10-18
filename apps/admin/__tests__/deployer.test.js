@@ -34,6 +34,7 @@ describe('createDeployer', () => {
     const harness = makeSpawn();
     const logger = { info: () => {}, error: () => {} };
     const deployer = createDeployer({ config: baseConfig, logger, spawnImpl: harness.spawnImpl });
+    expect(deployer.configured).toBe(true);
 
     const result = await deployer.deploy({ by: 'boss' });
     expect(result.ok).toBe(true);
@@ -44,8 +45,9 @@ describe('createDeployer', () => {
     expect(commands).toEqual(['clone', '-c', 'push', 'clone', '-c', 'push']);
     expect(harness.calls[1].args).toContain('commit');
 
-    // URL без пароля, пароль уходит только в env (GIT_ASKPASS)
-    expect(harness.calls[0].args[3]).toBe('https://git.example.ru/u/beauty-bot.git');
+    // URL с логином для basic auth (askpass отвечает только паролем),
+    // сам пароль уходит только в env (GIT_ASKPASS)
+    expect(harness.calls[0].args[3]).toBe('https://user@git.example.ru/u/beauty-bot.git');
     const env = harness.calls[0].options.env;
     expect(env.DEPLOY_PASSWORD).toBe('pass');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
@@ -77,6 +79,7 @@ describe('createDeployer', () => {
       logger: { info: () => {}, error: () => {} },
       spawnImpl: harness.spawnImpl,
     });
+    expect(deployer.configured).toBe(false); // UI скрывает кнопку по этому флагу
     const result = await deployer.deploy({});
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/DEPLOY_LOGIN/);

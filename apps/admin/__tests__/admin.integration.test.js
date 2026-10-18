@@ -61,6 +61,7 @@ beforeAll(async () => {
     config: { env: 'development', dbState: () => 'ok' },
     logger,
     deployer: {
+      configured: true,
       running: false,
       lastResult: null,
       deploy: async ({ by }) => ({ ok: true, detail: 'beauty-bot: ok; beauty-admin: ok', by }),
@@ -180,6 +181,35 @@ describe('страницы под сессией', () => {
 
       const html = await (await authed('/settings/deploy?result=ok')).text();
       expect(html.includes('Деплой запущен успешно')).toBe(true);
+    });
+
+    test('без DEPLOY_* кнопка скрыта, показан баннер «не настроено» (ревью 4430c97, риск 2)', async () => {
+      const app2 = createAdminApp({
+        session: createSession('test-secret-at-least-16-chars'),
+        bot: fakeBot,
+        models: { AdminUser, BotUser, GenerationRequest, Setting },
+        config: { env: 'development', dbState: () => 'ok' },
+        logger,
+        deployer: { configured: false, running: false, lastResult: null, deploy: async () => ({ ok: false }) },
+      });
+      const srv = app2.listen(0);
+      await new Promise((resolve) => srv.on('listening', resolve));
+      const url = `http://127.0.0.1:${srv.address().port}`;
+
+      const login = await fetch(`${url}/login`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'login=boss&password=supersecret',
+      });
+      const c = (login.headers.get('set-cookie') || '').split(';')[0];
+      const html = await (await fetch(`${url}/settings/deploy`, { headers: { cookie: c } })).text();
+      expect(html.includes('Кнопка не настроена')).toBe(true);
+      expect(html.includes('DEPLOY_LOGIN')).toBe(true);
+      // самой кнопки нет (фраза встречается и в план-листе, поэтому проверяем класс)
+      expect(html.includes('deploy-btn')).toBe(false);
+
+      await new Promise((resolve) => srv.close(resolve));
     });
 
     test('несуществующий раздел — 404', async () => {

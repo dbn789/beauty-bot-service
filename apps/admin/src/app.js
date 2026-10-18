@@ -183,7 +183,7 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
       notes: (doc && doc.data && doc.data.notes) || '',
       saved: req.query.saved === '1',
       deploy: req.params.section === 'deploy' ? {
-        configured: Boolean(deployer),
+        configured: Boolean(deployer && deployer.configured),
         running: deployer && deployer.running,
         lastResult: deployer && deployer.lastResult,
         flash: req.query.result || null,

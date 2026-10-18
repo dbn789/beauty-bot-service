@@ -24,11 +24,18 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
     .split(',').map((s) => s.trim()).filter(Boolean);
   const base = () => String(config.deployGitBase || '').replace(/\/+$/, '');
 
+  // логин вшиваем в URL (basic auth), askpass отвечает только паролем —
+  // иначе git спросит «Username:» и askpass честно ответит на него паролем
+  const authUrl = (repo) =>
+    base().replace(/^(https?:\/\/)/, `$1${encodeURIComponent(config.deployLogin)}@`) + `/${repo}.git`;
+
+  const configured = Boolean(config.deployLogin && config.deployPassword && base() && repos().length);
+
   const state = { running: false, lastResult: null };
 
   const deploy = async ({ by } = {}) => {
     if (state.running) return { ok: false, alreadyRunning: true };
-    if (!config.deployLogin || !config.deployPassword || !base() || repos().length === 0) {
+    if (!configured) {
       return {
         ok: false,
         error: 'deploy not configured: required DEPLOY_LOGIN, DEPLOY_PASSWORD, DEPLOY_GIT_BASE, DEPLOY_REPOS',
@@ -51,7 +58,7 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
     try {
       for (const repo of repos()) {
         const dir = path.join(tmp, repo);
-        await runGit(['clone', '--depth', '1', `${base()}/${repo}.git`, dir], { env: gitEnv });
+        await runGit(['clone', '--depth', '1', authUrl(repo), dir], { env: gitEnv });
         await runGit(
           ['-c', 'user.email=admin@beauty.local', '-c', `user.name=${by || 'beauty-admin'}`,
             'commit', '--allow-empty', '-m', `deploy: apply settings (by ${by || 'admin'})`],
@@ -75,6 +82,7 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
 
   return {
     deploy,
+    configured,
     get running() { return state.running; },
     get lastResult() { return state.lastResult; },
   };
