@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { AdminUser, User: BotUser, GenerationRequest, Setting } = require('@beauty/shared');
 const { createSession } = require('./helpers/session');
 const { createBotApiClient } = require('./helpers/botApiClient');
+const { createDeployer } = require('./helpers/deployer');
 const { createAdminApp } = require('./src/app');
 
 const config = {
@@ -15,6 +16,11 @@ const config = {
   adminPassword: process.env.ADMIN_PASSWORD || '',
   botUrl: process.env.BOT_INTERNAL_API_URL || '',
   botKey: process.env.BOT_INTERNAL_API_KEY || '',
+  // кнопка «Задеплоить на Amvera» (раздел настроек «Деплой»)
+  deployLogin: process.env.DEPLOY_LOGIN || '',
+  deployPassword: process.env.DEPLOY_PASSWORD || '',
+  deployGitBase: process.env.DEPLOY_GIT_BASE || '',
+  deployRepos: process.env.DEPLOY_REPOS || '',
 };
 
 const bootLog = (level, msg, extra = {}) =>
@@ -49,6 +55,13 @@ const start = async () => {
     models: { AdminUser, BotUser, GenerationRequest, Setting },
     config: { ...config, dbState: () => (mongoose.connection.readyState === 1 ? 'ok' : 'disconnected') },
     logger: { error: (extra, msg) => bootLog(50, msg, extra) },
+    deployer: createDeployer({
+      config,
+      logger: {
+        error: (extra, msg) => bootLog(50, msg, extra),
+        info: (extra, msg) => bootLog(30, msg, extra),
+      },
+    }),
   });
 
   const server = app.listen(config.port, () => bootLog(30, 'started', { port: config.port }));

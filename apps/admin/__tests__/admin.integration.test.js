@@ -60,6 +60,11 @@ beforeAll(async () => {
     models: { AdminUser, BotUser, GenerationRequest, Setting },
     config: { env: 'development', dbState: () => 'ok' },
     logger,
+    deployer: {
+      running: false,
+      lastResult: null,
+      deploy: async ({ by }) => ({ ok: true, detail: 'beauty-bot: ok; beauty-admin: ok', by }),
+    },
   });
   server = app.listen(0);
   await new Promise((resolve) => server.on('listening', resolve));
@@ -151,14 +156,30 @@ describe('страницы под сессией', () => {
       expect(response.headers.get('location')).toBe('/settings/bot');
     });
 
-    test('все четыре подтаба открываются с планом раздела', async () => {
-      for (const section of ['users', 'bot', 'generation', 'stand']) {
+    test('все пять подтабов открываются с планом раздела', async () => {
+      for (const section of ['users', 'bot', 'generation', 'stand', 'deploy']) {
         const response = await authed(`/settings/${section}`);
         expect(response.status).toBe(200);
         const html = await response.text();
         expect(html.includes('Запланировано')).toBe(true);
         expect(html.includes('Сохранить заметку')).toBe(true);
       }
+    });
+
+    test('кнопка «Задеплоить»: POST запускает деплоер и возвращает ok', async () => {
+      const html0 = await (await authed('/settings/deploy')).text();
+      expect(html0.includes('Задеплоить на Amvera')).toBe(true);
+
+      const response = await fetch(`${baseUrl}/settings/deploy/run`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie },
+      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get('location')).toBe('/settings/deploy?result=ok');
+
+      const html = await (await authed('/settings/deploy?result=ok')).text();
+      expect(html.includes('Деплой запущен успешно')).toBe(true);
     });
 
     test('несуществующий раздел — 404', async () => {

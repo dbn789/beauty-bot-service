@@ -49,9 +49,18 @@ const SETTINGS_META = {
       'Обзор переменных окружения без секретов (только чтение)',
     ],
   },
+  deploy: {
+    title: 'Деплой',
+    hint: 'Пересборка и перезапуск сервисов на Amvera',
+    planned: [
+      'Кнопка «Задеплоить на Amvera» — уже работает (см. ниже)',
+      'История запусков: кто и когда деплоил',
+      'Статус сборки на платформе',
+    ],
+  },
 };
 
-const createAdminApp = ({ session, bot, models, config, logger, startedAt = Date.now() } = {}) => {
+const createAdminApp = ({ session, bot, models, config, logger, deployer = null, startedAt = Date.now() } = {}) => {
   const { AdminUser, BotUser, GenerationRequest, Setting } = models;
   const isProduction = config.env === 'production';
 
@@ -154,6 +163,15 @@ const createAdminApp = ({ session, bot, models, config, logger, startedAt = Date
   // ── настройки (каркас: подтабы + заметка; содержимое — поэтапно) ─────────
   app.get('/settings', (_req, res) => res.redirect('/settings/bot'));
 
+  // запуск деплоя из админки (раздел «Деплой»): до POST /settings/:section,
+  // чтобы маршрут не был съеден обобщённым
+  app.post('/settings/deploy/run', async (req, res, next) => {
+    if (!deployer) return next();
+    const result = await deployer.deploy({ by: res.locals.adminLogin });
+    const outcome = result.alreadyRunning ? 'busy' : (result.ok ? 'ok' : 'error');
+    return res.redirect(`/settings/deploy?result=${outcome}`);
+  });
+
   app.get('/settings/:section', async (req, res, next) => {
     if (!SETTINGS_SECTIONS.includes(req.params.section)) return next();
     const doc = await Setting.findOne({ section: req.params.section }).lean();
@@ -164,6 +182,12 @@ const createAdminApp = ({ session, bot, models, config, logger, startedAt = Date
       current: SETTINGS_META[req.params.section],
       notes: (doc && doc.data && doc.data.notes) || '',
       saved: req.query.saved === '1',
+      deploy: req.params.section === 'deploy' ? {
+        configured: Boolean(deployer),
+        running: deployer && deployer.running,
+        lastResult: deployer && deployer.lastResult,
+        flash: req.query.result || null,
+      } : null,
     });
   });
 

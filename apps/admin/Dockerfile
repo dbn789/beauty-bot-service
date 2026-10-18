@@ -2,6 +2,9 @@
 # node:22-slim в harbor.waw0 отдаёт битый слой (unexpected EOF). Alpine — другой образ.
 FROM node:22-alpine
 
+# git нужен кнопке «Задеплоить на Amvera» (раздел настроек «Деплой»)
+RUN apk add --no-cache git
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./

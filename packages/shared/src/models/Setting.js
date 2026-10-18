@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 // Разделы настроек, которыми управляет админка (Э4+: поэтапная реализация).
 // Бот читает ту же коллекцию — env остаётся значением по умолчанию/аварийным.
-const SETTINGS_SECTIONS = Object.freeze(['users', 'bot', 'generation', 'stand']);
+const SETTINGS_SECTIONS = Object.freeze(['users', 'bot', 'generation', 'stand', 'deploy']);
 
 const settingSchema = new mongoose.Schema({
   section: { type: String, enum: SETTINGS_SECTIONS, required: true, unique: true, index: true },

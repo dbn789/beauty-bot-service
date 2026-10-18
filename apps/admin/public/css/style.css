@@ -173,5 +173,12 @@ ul.planned li { margin: 4px 0; }
 .notes-form button:hover { background: var(--accent-dark); }
 .ok { color: var(--ok); margin: 0 0 8px; }
 
+.deploy-btn {
+  font-weight: 600;
+  padding: 12px 22px !important;
+  background: var(--accent) !important;
+}
+button.deploy-btn:disabled { opacity: 0.6; cursor: wait; }
+
 /* ── о сервисе ── */
 .table.about td:first-child { color: var(--muted); width: 40%; }
