@@ -1,6 +1,6 @@
 // Точка входа контейнера beauty-bot (ТЗ 7.3):
 // Internal API + бот + генерация + ретеншн + graceful shutdown.
-const { User, GenerationRequest } = require('@beauty/shared');
+const { User, GenerationRequest, Setting } = require('@beauty/shared');
 
 // Сети без IPv6-маршрута: DNS bfl по ротации отдаёт AAAA первым, а fetch Node 18
 // без отката ловит CONNECT_TIMEOUT — отсюда прерывистые отказы провайдера.
@@ -21,13 +21,15 @@ const { createRetention } = require('./src/storage/retention');
 const { getProvider } = require('./src/generation/providers');
 const { LimiterQueue } = require('./src/generation/queue');
 const { createGenerationService } = require('./src/generation/service');
+const { createSettingsReader } = require('./src/settings/reader');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const bootstrap = async () => {
   const config = loadConfig();
   const logger = createLogger({ env: config.env });
-  const models = { User, GenerationRequest };
+  const models = { User, GenerationRequest, Setting };
+  const settings = createSettingsReader({ models });
   const runtime = { botReady: false };
 
   // Ждём завершения генераций в работе и их отправки клиентам (до timeoutMs),
@@ -103,7 +105,9 @@ const bootstrap = async () => {
           signal: AbortSignal.timeout(10000),
         });
         if (response.ok) {
-          bot = createBot({ token: config.botToken, logger, config, models, storage, generation, retention });
+          bot = createBot({
+            token: config.botToken, logger, config, models, storage, generation, retention, settings,
+          });
           bot.botInfo = await response.json().then((body) => body.result);
           break;
         }

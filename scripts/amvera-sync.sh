@@ -41,6 +41,7 @@ for app in bot admin; do
     cd "$TMP/$app"
     git add amvera.yaml
     git diff --cached --quiet || git commit -q -m "chore: amvera deploy config ($app)"
+    echo "Пушу $app. Логин уже в адресе. Введите пароль кабинета Amvera — символы на экране не появятся."
     git push "$remote" "$branch:master" --force
   )
   git worktree remove --force "$TMP/$app"

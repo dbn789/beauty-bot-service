@@ -8,17 +8,38 @@ const { version } = require('../package.json');
 
 const SESSION_COOKIE = 'beauty_session';
 const SESSION_TTL_MS = 12 * 3600 * 1000; // FR-A-020: 12 часов
+const ACCESS_MODES = Object.freeze(['off', 'whitelist', 'blacklist']);
+
+const parseTgId = (raw) => {
+  const text = String(raw || '').trim();
+  if (!/^[1-9]\d{0,14}$/.test(text)) return null;
+  const id = Number(text);
+  return Number.isSafeInteger(id) ? id : null;
+};
+
+const usersSettingData = (doc) => {
+  const data = (doc && doc.data) || {};
+  const mode = ACCESS_MODES.includes(data.accessMode) ? data.accessMode : 'off';
+  const lists = data.lists || {};
+  return {
+    ...data,
+    accessMode: mode,
+    lists: {
+      whitelist: Array.isArray(lists.whitelist) ? lists.whitelist : [],
+      blacklist: Array.isArray(lists.blacklist) ? lists.blacklist : [],
+    },
+  };
+};
 
 // Каркас настроек (заказ: таб «Настройки» с подтабами). Содержимое разделов
 // наполняется поэтапно; пока в каждом — план и рабочая заметка администратора.
 const SETTINGS_META = {
   users: {
     title: 'Пользователи',
-    hint: 'Администраторы, клиенты и их лимиты',
+    hint: 'Кто из Telegram может пользоваться ботом',
     planned: [
       'Учётные записи администраторов: создание и смена пароля',
       'Индивидуальные лимиты генераций клиенту',
-      'Блокировка клиентов',
     ],
   },
   bot: {
@@ -163,6 +184,50 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
   // ── настройки (каркас: подтабы + заметка; содержимое — поэтапно) ─────────
   app.get('/settings', (_req, res) => res.redirect('/settings/bot'));
 
+  const loadUsersSetting = async () => usersSettingData(await Setting.findOne({ section: 'users' }).lean());
+
+  const writeUsersSetting = async (data, adminLogin) => {
+    await Setting.updateOne(
+      { section: 'users' },
+      { $set: { data, updatedBy: adminLogin } },
+      { upsert: true }
+    );
+  };
+
+  app.post('/settings/users/access', async (req, res) => {
+    const mode = ACCESS_MODES.includes(req.body.accessMode) ? req.body.accessMode : 'off';
+    const data = await loadUsersSetting();
+    data.accessMode = mode;
+    await writeUsersSetting(data, res.locals.adminLogin);
+    res.redirect('/settings/users?saved=1');
+  });
+
+  app.post('/settings/users/entries', async (req, res) => {
+    const tgId = parseTgId(req.body.tgId);
+    if (!tgId) return res.redirect('/settings/users?error=badid');
+    const data = await loadUsersSetting();
+    const mode = data.accessMode === 'blacklist' ? 'blacklist' : 'whitelist';
+    if (data.accessMode === 'off') return res.redirect('/settings/users?error=mode');
+    const list = data.lists[mode];
+    if (list.some((entry) => entry.tgId === tgId)) {
+      return res.redirect('/settings/users?error=duplicate');
+    }
+    list.push({ tgId });
+    await writeUsersSetting(data, res.locals.adminLogin);
+    return res.redirect('/settings/users?added=1');
+  });
+
+  app.post('/settings/users/entries/remove', async (req, res) => {
+    const tgId = parseTgId(req.body.tgId);
+    const data = await loadUsersSetting();
+    const mode = data.accessMode === 'blacklist' ? 'blacklist' : 'whitelist';
+    if (tgId && data.accessMode !== 'off') {
+      data.lists[mode] = data.lists[mode].filter((entry) => entry.tgId !== tgId);
+      await writeUsersSetting(data, res.locals.adminLogin);
+    }
+    res.redirect('/settings/users?removed=1');
+  });
+
   // запуск деплоя из админки (раздел «Деплой»): до POST /settings/:section,
   // чтобы маршрут не был съеден обобщённым
   app.post('/settings/deploy/run', async (req, res, next) => {
@@ -175,6 +240,31 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
   app.get('/settings/:section', async (req, res, next) => {
     if (!SETTINGS_SECTIONS.includes(req.params.section)) return next();
     const doc = await Setting.findOne({ section: req.params.section }).lean();
+    let access = null;
+    if (req.params.section === 'users') {
+      const data = usersSettingData(doc);
+      const list = data.accessMode === 'off' ? [] : data.lists[data.accessMode];
+      const profiles = list.length
+        ? await BotUser.find({ tgId: { $in: list.map((entry) => entry.tgId) } }).lean()
+        : [];
+      const byId = new Map(profiles.map((user) => [user.tgId, user]));
+      access = {
+        mode: data.accessMode,
+        rows: list.map((entry) => {
+          const profile = byId.get(entry.tgId);
+          return {
+            tgId: entry.tgId,
+            username: profile && profile.username,
+            firstName: profile && profile.firstName,
+            lastName: profile && profile.lastName,
+            known: Boolean(profile),
+          };
+        }),
+        error: req.query.error || null,
+        added: req.query.added === '1',
+        removed: req.query.removed === '1',
+      };
+    }
     res.render('settings', {
       title: `Настройки · ${SETTINGS_META[req.params.section].title}`,
       sections: SETTINGS_SECTIONS.map((key) => ({ key, title: SETTINGS_META[key].title })),
@@ -182,6 +272,7 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
       current: SETTINGS_META[req.params.section],
       notes: (doc && doc.data && doc.data.notes) || '',
       saved: req.query.saved === '1',
+      access,
       deploy: req.params.section === 'deploy' ? {
         configured: Boolean(deployer && deployer.configured),
         running: deployer && deployer.running,
@@ -194,9 +285,11 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
   app.post('/settings/:section', async (req, res, next) => {
     if (!SETTINGS_SECTIONS.includes(req.params.section)) return next();
     const notes = String(req.body.notes || '').slice(0, 2000);
+    const doc = await Setting.findOne({ section: req.params.section }).lean();
+    const data = { ...((doc && doc.data) || {}), notes };
     await Setting.updateOne(
       { section: req.params.section },
-      { $set: { data: { notes }, updatedBy: res.locals.adminLogin } },
+      { $set: { data, updatedBy: res.locals.adminLogin } },
       { upsert: true }
     );
     res.redirect(`/settings/${req.params.section}?saved=1`);

@@ -12,6 +12,57 @@ block content
     h2= current.title
     p.muted= current.hint
 
+    if section === 'users' && access
+      if access.added
+        p.ok Пользователь добавлен. Бот увидит список в течение полминуты, пересборка не нужна.
+      if access.removed
+        p.ok Пользователь удалён из списка.
+      if access.error === 'badid'
+        p.banner Укажите Telegram ID — целое число, как в профиле пользователя.
+      if access.error === 'duplicate'
+        p.banner Этот ID уже есть в списке.
+      if access.error === 'mode'
+        p.banner Сначала выберите белый или чёрный список.
+      form.notes-form(method="post" action="/settings/users/access")
+        label Доступ к боту
+        select(name="accessMode")
+          option(value="off" selected=(access.mode === 'off')) фильтр отключен
+          option(value="whitelist" selected=(access.mode === 'whitelist')) белый список
+          option(value="blacklist" selected=(access.mode === 'blacklist')) чёрный список
+        button(type="submit") Сохранить
+      if access.mode === 'off'
+        p.muted Сейчас ботом может пользоваться любой пользователь Telegram.
+      else
+        p.muted= access.mode === 'whitelist' ? 'После /start бот отвечает только людям из таблицы. Остальным — отказ.' : 'После /start бот отказывает людям из таблицы. Остальным — отвечает. Удаление своих данных (/delete_my_data) доступно всем.'
+        table.table
+          thead
+            tr
+              th Telegram ID
+              th Username
+              th Имя
+              th Фамилия
+              th
+          tbody
+            each row in access.rows
+              tr
+                td= row.tgId
+                td= row.username ? '@' + row.username : '—'
+                td= row.firstName || '—'
+                td= row.lastName || '—'
+                td
+                  form.row-form(method="post" action="/settings/users/entries/remove")
+                    input(type="hidden" name="tgId" value=row.tgId)
+                    button(type="submit") Удалить
+            if !access.rows.length
+              tr
+                td(colspan="5")
+                  span.muted= access.mode === 'whitelist' ? 'Список пуст — бот закрыт для всех.' : 'Список пуст — бот отвечает всем.'
+        form.notes-form(method="post" action="/settings/users/entries")
+          label Telegram ID
+          input(type="text" name="tgId" inputmode="numeric" autocomplete="off" required placeholder="Например 123456789")
+          button(type="submit") Добавить пользователя
+          span.muted Имя и username появятся в таблице, когда этот человек нажмёт /start. До этого виден только ID.
+
     h3 Запланировано на следующих шагах
     ul.planned
       each item in current.planned
@@ -30,7 +81,7 @@ block content
       else
         form.notes-form(method="post" action="/settings/deploy/run" onsubmit="return confirm('Пересобрать и перезапустить оба сервиса на Amvera?')")
           button.deploy-btn(type="submit" disabled=deploy.running)= deploy.running ? 'Деплой выполняется…' : '🚀 Задеплоить на Amvera'
-          span.muted Пуш в beauty-bot и beauty-admin → пересборка и перезапуск (~2–3 минуты). Настройки из БД бот подхватит после рестарта.
+          span.muted Пуш в beauty-bot и beauty-admin → пересборка и перезапуск (~2–3 минуты). Списки доступа бот читает из базы сам, без пересборки.
         if deploy.lastResult
           p.muted Последний запуск: #{deploy.lastResult.at} · #{deploy.lastResult.by} ·
             = deploy.lastResult.ok ? ' успех' : ' ошибка'

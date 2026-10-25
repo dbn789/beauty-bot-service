@@ -7,6 +7,7 @@ const { Telegraf, Input } = require('telegraf');
 const { DIALOG_STEP, PRESETS_CATALOG } = require('@beauty/shared');
 const texts = require('./helpers/texts');
 const keyboards = require('./helpers/keyboards');
+const { checkAccess, resolveAccess } = require('./helpers/access');
 const { validatePhotoMessage, checkDownloadedPhoto, isPhotoPayload } = require('./helpers/validation');
 const { nextResetTimeMoscow } = require('./helpers/day');
 
@@ -24,7 +25,7 @@ const presetTitle = (code) => {
   return preset ? preset.titleRu : 'Стиль не найден';
 };
 
-const createBot = ({ token, logger, config, models, storage, generation, retention }) => {
+const createBot = ({ token, logger, config, models, storage, generation, retention, settings = null }) => {
   const bot = new Telegraf(token);
   // активные фоновые трекинги — shutdown ждёт их вместе с очередью (ревью 308372d, риск 2)
   bot.activeTracking = new Set();
@@ -211,6 +212,29 @@ const createBot = ({ token, logger, config, models, storage, generation, retenti
 
   bot.catch((error) => {
     logger.error({ err: error && error.message }, 'telegraf handler error');
+  });
+
+  // Доступ по списку из настроек админки. Проверяем каждое сообщение, не только
+  // /start: иначе фото и кнопки обходят фильтр. /delete_my_data остаётся всегда.
+  const isDeleteData = (ctx) => {
+    const text = ctx.message && ctx.message.text;
+    if (!text) return false;
+    const command = text.trim().split(/\s+/)[0].split('@')[0];
+    return command === '/delete_my_data';
+  };
+
+  bot.use(async (ctx, next) => {
+    if (ctx.from) await getOrCreateUser(ctx);
+    if (!settings || isDeleteData(ctx)) return next();
+    const { mode, entries } = resolveAccess(await settings.get('users'));
+    if (checkAccess(mode, entries, ctx.from && ctx.from.id)) return next();
+    const text = mode === 'blacklist' ? texts.accessDeniedBlacklist : texts.accessDeniedWhitelist;
+    if (ctx.callbackQuery) {
+      await answerCb(ctx, text);
+      return undefined;
+    }
+    await ctx.reply(text);
+    return undefined;
   });
 
   // ── команды ────────────────────────────────────────────────────────────────

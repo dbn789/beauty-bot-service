@@ -216,6 +216,77 @@ describe('страницы под сессией', () => {
       expect((await authed('/settings/nope')).status).toBe(404);
     });
 
+    test('доступ к боту: режим, добавление по ID, профиль после /start, удаление', async () => {
+      await BotUser.create({
+        tgId: 424242, username: 'anna', firstName: 'Анна', lastName: 'Иванова',
+      });
+
+      const off = await (await authed('/settings/users')).text();
+      expect(off.includes('фильтр отключен')).toBe(true);
+      expect(off.includes('Добавить пользователя')).toBe(false);
+
+      const setMode = await fetch(`${baseUrl}/settings/users/access`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'accessMode=whitelist',
+      });
+      expect(setMode.headers.get('location')).toBe('/settings/users?saved=1');
+
+      const bad = await fetch(`${baseUrl}/settings/users/entries`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tgId=abc',
+      });
+      expect(bad.headers.get('location')).toBe('/settings/users?error=badid');
+
+      const add = await fetch(`${baseUrl}/settings/users/entries`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tgId=424242',
+      });
+      expect(add.headers.get('location')).toBe('/settings/users?added=1');
+
+      const html = await (await authed('/settings/users?added=1')).text();
+      expect(html.includes('424242')).toBe(true);
+      expect(html.includes('@anna')).toBe(true);
+      expect(html.includes('Анна')).toBe(true);
+      expect(html.includes('Иванова')).toBe(true);
+
+      const again = await fetch(`${baseUrl}/settings/users/entries`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tgId=424242',
+      });
+      expect(again.headers.get('location')).toBe('/settings/users?error=duplicate');
+
+      const note = await fetch(`${baseUrl}/settings/users`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'notes=только салон',
+      });
+      expect(note.status).toBe(302);
+      const saved = await Setting.findOne({ section: 'users' }).lean();
+      expect(saved.data.notes).toBe('только салон');
+      expect(saved.data.accessMode).toBe('whitelist');
+      expect(saved.data.lists.whitelist).toEqual([{ tgId: 424242 }]);
+
+      const remove = await fetch(`${baseUrl}/settings/users/entries/remove`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'tgId=424242',
+      });
+      expect(remove.headers.get('location')).toBe('/settings/users?removed=1');
+      const after = await Setting.findOne({ section: 'users' }).lean();
+      expect(after.data.lists.whitelist).toEqual([]);
+      expect(after.data.lists.blacklist).toEqual([]);
+    });
+
     test('заметка сохраняется и возвращается (round-trip через БД)', async () => {
       const post = await fetch(`${baseUrl}/settings/stand`, {
         method: 'POST',
