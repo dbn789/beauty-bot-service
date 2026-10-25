@@ -22,6 +22,7 @@ cleanup() {
     fi
   done
   rm -rf "$TMP"
+  git worktree prune >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
