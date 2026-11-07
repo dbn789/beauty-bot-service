@@ -21,6 +21,7 @@ const config = {
   deployPassword: process.env.DEPLOY_PASSWORD || '',
   deployGitBase: process.env.DEPLOY_GIT_BASE || '',
   deployRepos: process.env.DEPLOY_REPOS || '',
+  deploySourceUrl: process.env.DEPLOY_SOURCE_URL || '',
 };
 
 const bootLog = (level, msg, extra = {}) =>

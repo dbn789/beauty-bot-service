@@ -1,14 +1,14 @@
-// Кнопка «Задеплоить на Amvera» из админки (раздел настроек «Деплой»).
-// Внутри контейнера нет исходников и веток машины разработки, поэтому деплой
-// эквивалентен amvera-sync.sh по эффекту: shallow-clone каждого репозитория
-// Amvera + empty-commit + push → платформа пересобирает и перезапускает сервисы.
-// Пароль передаётся через GIT_ASKPASS-скрипт (не виден в process list и логах).
+// Кнопка «Задеплоить на Amvera» повторяет scripts/amvera-sync.sh:
+// клонирует master из DEPLOY_SOURCE_URL (GitHub), для каждого проекта
+// кладёт свой deploy/amvera-<app>.yaml в корень как amvera.yaml и пушит
+// эту ветку в master репозитория Amvera. Пароль Amvera уходит только в
+// GIT_ASKPASS, в URL и логи его нет.
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const createDeployer = ({ config, logger, spawnImpl } = {}) => {
+const createDeployer = ({ config, logger, spawnImpl, prepareImpl } = {}) => {
   const runGit = (args, { cwd, env }) => new Promise((resolve, reject) => {
     const child = (spawnImpl || spawn)('git', args, { cwd, env });
     let stderr = '';
@@ -23,13 +23,31 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
   const repos = () => String(config.deployRepos || '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   const base = () => String(config.deployGitBase || '').replace(/\/+$/, '');
+  const sourceUrl = () => String(config.deploySourceUrl || '').trim();
+  // beauty-bot → файл deploy/amvera-bot.yaml
+  const appKey = (repo) => repo.replace(/^beauty-/, '');
 
-  // логин вшиваем в URL (basic auth), askpass отвечает только паролем —
-  // иначе git спросит «Username:» и askpass честно ответит на него паролем
+  // логин вшиваем в URL (basic auth), askpass отвечает только паролем.
+  // Суффикс .git Amvera не принимает: после верного пароля отвечает «repository not found».
   const authUrl = (repo) =>
-    base().replace(/^(https?:\/\/)/, `$1${encodeURIComponent(config.deployLogin)}@`) + `/${repo}.git`;
+    base().replace(/^(https?:\/\/)/, `$1${encodeURIComponent(config.deployLogin)}@`) + `/${repo}`;
 
-  const configured = Boolean(config.deployLogin && config.deployPassword && base() && repos().length);
+  const prepare = prepareImpl || (async (dir, repo) => {
+    const app = appKey(repo);
+    const from = path.join(dir, 'deploy', `amvera-${app}.yaml`);
+    try {
+      await fs.promises.copyFile(from, path.join(dir, 'amvera.yaml'));
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        throw new Error(`в источнике нет deploy/amvera-${app}.yaml`);
+      }
+      throw error;
+    }
+  });
+
+  const configured = Boolean(
+    config.deployLogin && config.deployPassword && base() && repos().length && sourceUrl()
+  );
 
   const state = { running: false, lastResult: null };
 
@@ -38,13 +56,12 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
     if (!configured) {
       return {
         ok: false,
-        error: 'deploy not configured: required DEPLOY_LOGIN, DEPLOY_PASSWORD, DEPLOY_GIT_BASE, DEPLOY_REPOS',
+        error: 'deploy not configured: required DEPLOY_LOGIN, DEPLOY_PASSWORD, DEPLOY_GIT_BASE, DEPLOY_REPOS, DEPLOY_SOURCE_URL',
       };
     }
 
     state.running = true;
     const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'beauty-deploy-'));
-    // askpass отдаёт пароль только своему git; в ps и логах его нет
     const askpass = path.join(tmp, 'askpass.sh');
     await fs.promises.writeFile(askpass, '#!/bin/sh\necho "$DEPLOY_PASSWORD"\n', { mode: 0o700 });
     const gitEnv = {
@@ -56,19 +73,26 @@ const createDeployer = ({ config, logger, spawnImpl } = {}) => {
 
     const done = [];
     try {
+      const dir = path.join(tmp, 'source');
+      await runGit(['clone', '--branch', 'master', sourceUrl(), dir], { env: gitEnv });
+      // метка исходного master: перед каждым проектом возвращаемся сюда,
+      // чтобы amvera.yaml одного приложения не уехал во второе
+      await runGit(['branch', '-f', 'source', 'HEAD'], { cwd: dir, env: gitEnv });
       for (const repo of repos()) {
-        const dir = path.join(tmp, repo);
-        await runGit(['clone', '--depth', '1', authUrl(repo), dir], { env: gitEnv });
+        const app = appKey(repo);
+        await runGit(['reset', '--hard', 'source'], { cwd: dir, env: gitEnv });
+        await prepare(dir, repo);
+        await runGit(['add', '-f', 'amvera.yaml'], { cwd: dir, env: gitEnv });
         await runGit(
           ['-c', 'user.email=admin@beauty.local', '-c', `user.name=${by || 'beauty-admin'}`,
-            'commit', '--allow-empty', '-m', `deploy: apply settings (by ${by || 'admin'})`],
+            'commit', '-m', `chore: amvera deploy config (${app})`],
           { cwd: dir, env: gitEnv }
         );
-        await runGit(['push', 'origin', 'HEAD:master'], { cwd: dir, env: gitEnv });
+        await runGit(['push', '--force', authUrl(repo), 'HEAD:master'], { cwd: dir, env: gitEnv });
         done.push(`${repo}: ok`);
       }
       state.lastResult = { at: new Date().toISOString(), ok: true, detail: done.join('; '), by: by || '' };
-      logger.info({ by, repos: repos() }, 'deploy from admin: pushed');
+      logger.info({ by, repos: repos() }, 'deploy from admin: pushed source master');
       return state.lastResult;
     } catch (error) {
       state.lastResult = { at: new Date().toISOString(), ok: false, detail: error.message.slice(0, 300), by: by || '' };

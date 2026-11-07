@@ -27,35 +27,52 @@ const baseConfig = {
   deployPassword: 'pass',
   deployGitBase: 'https://git.example.ru/u',
   deployRepos: 'beauty-bot,beauty-admin',
+  deploySourceUrl: 'https://github.com/dbn789/beauty-bot-service.git',
 };
 
 describe('createDeployer', () => {
-  test('happy path: clone → empty-commit → push для каждого репо', async () => {
+  test('happy path: clone master с GitHub, свой amvera.yaml и push в каждый проект', async () => {
     const harness = makeSpawn();
+    const prepared = [];
     const logger = { info: () => {}, error: () => {} };
-    const deployer = createDeployer({ config: baseConfig, logger, spawnImpl: harness.spawnImpl });
+    const deployer = createDeployer({
+      config: baseConfig,
+      logger,
+      spawnImpl: harness.spawnImpl,
+      prepareImpl: async (_dir, repo) => { prepared.push(repo); },
+    });
     expect(deployer.configured).toBe(true);
 
     const result = await deployer.deploy({ by: 'boss' });
     expect(result.ok).toBe(true);
     expect(result.detail).toBe('beauty-bot: ok; beauty-admin: ok');
+    expect(prepared).toEqual(['beauty-bot', 'beauty-admin']);
 
     const commands = harness.calls.map((c) => c.args[0]);
-    // на каждое репо: clone, commit (через -c конфиги), push
-    expect(commands).toEqual(['clone', '-c', 'push', 'clone', '-c', 'push']);
-    expect(harness.calls[1].args).toContain('commit');
+    expect(commands).toEqual([
+      'clone', 'branch',
+      'reset', 'add', '-c', 'push',
+      'reset', 'add', '-c', 'push',
+    ]);
 
-    // URL с логином для basic auth (askpass отвечает только паролем),
-    // сам пароль уходит только в env (GIT_ASKPASS)
-    expect(harness.calls[0].args[3]).toBe('https://user@git.example.ru/u/beauty-bot.git');
+    // источник — публичный GitHub, без пароля в URL
+    expect(harness.calls[0].args).toContain('https://github.com/dbn789/beauty-bot-service.git');
+    expect(harness.calls[0].args.join(' ')).not.toContain('pass');
+
+    const pushes = harness.calls.filter((c) => c.args[0] === 'push');
+    expect(pushes[0].args).toEqual([
+      'push', '--force', 'https://user@git.example.ru/u/beauty-bot', 'HEAD:master',
+    ]);
+    expect(pushes[1].args[2]).toBe('https://user@git.example.ru/u/beauty-admin');
+
     const env = harness.calls[0].options.env;
     expect(env.DEPLOY_PASSWORD).toBe('pass');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(String(env.GIT_ASKPASS)).toContain('askpass.sh');
 
-    // commit помечает, кто деплоил
-    const commitArgs = harness.calls[1].args.join(' ');
-    expect(commitArgs).toContain('deploy: apply settings (by boss)');
+    const commitArgs = harness.calls.find((c) => c.args.includes('commit')).args.join(' ');
+    expect(commitArgs).toContain('chore: amvera deploy config (bot)');
+    expect(commitArgs).toContain('user.name=boss');
   });
 
   test('ошибка clone → ok:false с деталями, состояние сбрасывается', async () => {
@@ -99,7 +116,12 @@ describe('createDeployer', () => {
       process.nextTick(() => child.emit('close', 0));
       return child;
     };
-    const deployer = createDeployer({ config: baseConfig, logger: { info: () => {}, error: () => {} }, spawnImpl });
+    const deployer = createDeployer({
+      config: baseConfig,
+      logger: { info: () => {}, error: () => {} },
+      spawnImpl,
+      prepareImpl: async () => {},
+    });
 
     const first = deployer.deploy({ by: 'boss' });
     // даём деплоеру дойти до clone (иначе эмит close потеряется до подписки)

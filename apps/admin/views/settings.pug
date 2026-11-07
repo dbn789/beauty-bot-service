@@ -77,11 +77,11 @@ block content
       if deploy.flash === 'error'
         p.banner Ошибка деплоя — смотрите последнюю попытку ниже или логи сервиса.
       if !deploy.configured
-        p.banner Кнопка не настроена: задайте DEPLOY_LOGIN, DEPLOY_PASSWORD, DEPLOY_GIT_BASE, DEPLOY_REPOS в переменных окружения beauty-admin.
+        p.banner Кнопка не настроена: задайте DEPLOY_LOGIN, DEPLOY_PASSWORD, DEPLOY_GIT_BASE, DEPLOY_REPOS и DEPLOY_SOURCE_URL в переменных окружения beauty-admin.
       else
-        form.notes-form(method="post" action="/settings/deploy/run" onsubmit="return confirm('Пересобрать и перезапустить оба сервиса на Amvera?')")
+        form.notes-form(method="post" action="/settings/deploy/run" onsubmit="return confirm('Взять master с GitHub и пересобрать оба сервиса на Amvera?')")
           button.deploy-btn(type="submit" disabled=deploy.running)= deploy.running ? 'Деплой выполняется…' : '🚀 Задеплоить на Amvera'
-          span.muted Пуш в beauty-bot и beauty-admin → пересборка и перезапуск (~2–3 минуты). Списки доступа бот читает из базы сам, без пересборки.
+          span.muted Клонирует master с GitHub, подкладывает amvera.yaml и пушит в beauty-bot и beauty-admin (~2–3 минуты). Списки доступа бот читает из базы сам, без пересборки.
         if deploy.lastResult
           p.muted Последний запуск: #{deploy.lastResult.at} · #{deploy.lastResult.by} ·
             = deploy.lastResult.ok ? ' успех' : ' ошибка'

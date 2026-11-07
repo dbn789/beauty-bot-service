@@ -72,7 +72,7 @@ const SETTINGS_META = {
   },
   deploy: {
     title: 'Деплой',
-    hint: 'Пересборка и перезапуск сервисов на Amvera',
+    hint: 'Отправка master с GitHub на Amvera',
     planned: [
       'Кнопка «Задеплоить на Amvera» — уже работает (см. ниже)',
       'История запусков: кто и когда деплоил',
