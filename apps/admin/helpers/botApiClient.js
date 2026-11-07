@@ -30,6 +30,24 @@ const createBotApiClient = ({ baseUrl, apiKey, timeoutMs = 10000, fetchImpl } = 
       const query = kind === 'v' ? `v=${v}` : `kind=${kind}`;
       return request(`/files/${id}?${query}`);
     },
+    standMeta: async () => (await request('/api/stand')).json(),
+    // тело — сырой multipart с фото; генерация на BFL занимает до пары минут
+    stand: async (body, contentType) => {
+      const response = await doFetch(`${baseUrl.replace(/\/$/, '')}/api/stand`, {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'content-type': contentType },
+        body,
+        signal: AbortSignal.timeout(180000),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(json.error || `bot api /api/stand: http ${response.status}`);
+        error.status = response.status;
+        error.form = json.form || null;
+        throw error;
+      }
+      return json;
+    },
   };
 };
 

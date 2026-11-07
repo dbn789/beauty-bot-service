@@ -67,19 +67,75 @@ const withNetworkRetries = async (fn, { attempts = 3, backoffMs = 500, signal } 
   }
 };
 
-// Размеры выхода: аспект исходника, площадь не выше капа, кратность 32
+// Размеры выхода: аспект исходника, площадь не выше капа, кратность 32.
+// Кап ~1.1 МП — поведение бота. Стенд передаёт больший pixelCap (до 4 МП, потолок FLUX.2).
 const round32 = (value) => Math.max(32, Math.round(value / 32) * 32);
-const outputSize = (buffer) => {
+const fitOutputSize = (buffer, pixelCap = OUTPUT_PIXELS_CAP) => {
   const size = imageSize(buffer);
   if (!size) return {};
   let { width, height } = size;
-  if (width * height > OUTPUT_PIXELS_CAP) {
-    const scale = Math.sqrt(OUTPUT_PIXELS_CAP / (width * height));
+  const cap = pixelCap > 0 ? pixelCap : OUTPUT_PIXELS_CAP;
+  if (width * height > cap) {
+    const scale = Math.sqrt(cap / (width * height));
     width *= scale;
     height *= scale;
   }
   return { width: round32(width), height: round32(height) };
 };
+const outputSize = (buffer) => fitOutputSize(buffer, OUTPUT_PIXELS_CAP);
+
+// Модели POST /v1/<id> на api.eu.bfl.ai (OpenAPI, ноябрь 2026).
+// controls — какие поля схема этой модели принимает сверх общих.
+const BFL_MODELS = Object.freeze([
+  {
+    id: 'flux-2-max',
+    title: 'FLUX.2 [max]',
+    note: 'Самое точное редактирование и следование промпту.',
+    priceUsd: 0.07,
+    controls: ['disablePup'],
+  },
+  {
+    id: 'flux-2-pro',
+    title: 'FLUX.2 [pro]',
+    note: 'Модель бота сейчас. Рабочая лошадка для правки по референсу.',
+    priceUsd: 0.045,
+    controls: ['disablePup'],
+  },
+  {
+    id: 'flux-2-pro-preview',
+    title: 'FLUX.2 [pro] preview',
+    note: 'Сюда BFL сначала выкатывает улучшения pro. Для постоянного прода не закреплена.',
+    priceUsd: 0.045,
+    controls: ['disablePup'],
+  },
+  {
+    id: 'flux-2-flex',
+    title: 'FLUX.2 [flex]',
+    note: 'Единственная с guidance и steps: ими крутят, насколько жёстко держать текст.',
+    priceUsd: 0.06,
+    controls: ['guidance', 'steps', 'promptUpsampling'],
+  },
+  {
+    id: 'flux-2-klein-9b',
+    title: 'FLUX.2 [klein] 9B',
+    note: 'Быстрее и дешевле. Причёску держит слабее pro.',
+    priceUsd: 0.015,
+    controls: [],
+  },
+  {
+    id: 'flux-2-klein-4b',
+    title: 'FLUX.2 [klein] 4B',
+    note: 'Самая дешёвая. Для сравнения цены, не для финального качества.',
+    priceUsd: 0.014,
+    controls: [],
+  },
+]);
+
+const RESOLUTIONS = Object.freeze([
+  { id: 'cap1', megapixels: 1.1, pixels: 1100000, title: 'Как в боте сейчас, около 1.1 МП' },
+  { id: '2mp', megapixels: 2, pixels: 2000000, title: '2 МП — больше деталей лица' },
+  { id: '4mp', megapixels: 4, pixels: 4000000, title: '4 МП — потолок FLUX.2' },
+]);
 
 class BflProvider {
   constructor({
@@ -146,18 +202,29 @@ class BflProvider {
     return body;
   }
 
-  async generate({ imageBuffer, mime = 'image/jpeg', prompt, variants = 1, signal } = {}) {
+  async generate({ imageBuffer, mime = 'image/jpeg', prompt, variants = 1, signal, request = null } = {}) {
     if (!imageBuffer) {
       throw Object.assign(new Error('bfl: imageBuffer is required for editing'), { code: 'validation' });
     }
     if (signal && signal.aborted) throw abortError();
     const dataUri = `data:${mime};base64,${imageBuffer.toString('base64')}`;
-    const { width, height } = outputSize(imageBuffer);
+    // request задаёт стенд: своя модель, свой размер и доп. поля схемы.
+    // Обычный вызов бота request не передаёт — тело остаётся прежним.
+    const modelName = request && request.model ? request.model : this.model;
+    const sized = request && request.width
+      ? { width: request.width, height: request.height }
+      : outputSize(imageBuffer);
+    const payload = {
+      prompt,
+      input_image: dataUri,
+      ...(sized.width ? { width: sized.width, height: sized.height } : {}),
+      ...(request && request.fields ? request.fields : {}),
+    };
 
-    const submitOne = () => this.requestJson(`${this.baseUrl}/${this.model}`, {
+    const submitOne = () => this.requestJson(`${this.baseUrl}/${modelName}`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ prompt, input_image: dataUri, ...(width ? { width, height } : {}) }),
+      body: JSON.stringify(payload),
     }, { signal });
 
     // submit не идемпотентен: не больше одной повторной попытки на сетевой сбой
@@ -187,7 +254,13 @@ class BflProvider {
       // не выжил ни один вариант — пусть сервис-уровень решает (один ретрай всего запроса)
       throw firstError || Object.assign(new Error('bfl: no variants succeeded'), { code: 'provider_error' });
     }
-    return { images, model: this.model };
+    const echo = { ...payload };
+    delete echo.input_image;
+    return {
+      images,
+      model: modelName,
+      ...(request ? { request: echo } : {}),
+    };
   }
 
   // Опрос + скачивание одного варианта, с внутренними ретраями идемпотентных GET
@@ -259,4 +332,8 @@ class BflProvider {
 module.exports = {
   BflProvider,
   mapHttpError,
+  BFL_MODELS,
+  RESOLUTIONS,
+  fitOutputSize,
+  OUTPUT_PIXELS_CAP,
 };

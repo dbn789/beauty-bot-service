@@ -78,6 +78,7 @@ const bootstrap = async () => {
     config,
     models,
     storage,
+    bflProvider: provider && provider.name === 'bfl' ? provider : null,
   });
   const server = app.listen(config.internalApiPort, () => {
     logger.info({ port: config.internalApiPort }, 'internal api started');

@@ -11,7 +11,8 @@ const variantSchema = new mongoose.Schema({
 }, { _id: false });
 
 const generationRequestSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  // у запроса со стенда пользователя Telegram нет
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
   status: {
     type: String,
     enum: Object.values(REQUEST_STATUS),

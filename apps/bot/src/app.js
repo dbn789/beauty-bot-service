@@ -4,6 +4,8 @@ const express = require('express');
 const { version } = require('../package.json');
 const { REQUEST_STATUS, PRESETS_CATALOG, DEFAULTS } = require('@beauty/shared');
 const { moscowDayKey } = require('./helpers/day');
+const { parseMultipart } = require('./helpers/multipart');
+const { catalog, parseStandRequest, journalStand } = require('./generation/stand');
 
 const MIME = {
   png: 'image/png',
@@ -20,6 +22,7 @@ const createApp = ({
   models = null,
   storage = null,
   meta = () => ({}),
+  bflProvider = null,
 } = {}) => {
   const app = express();
   app.disable('x-powered-by');
@@ -166,7 +169,7 @@ const createApp = ({
           .lean(),
       ]);
 
-      const userIds = [...new Set(items.map((i) => String(i.userId)))];
+      const userIds = [...new Set(items.map((i) => i.userId).filter(Boolean).map(String))];
       const users = userIds.length
         ? await models.User.find({ _id: { $in: userIds } }, { tgId: 1, firstName: 1, username: 1 }).lean()
         : [];
@@ -185,11 +188,14 @@ const createApp = ({
           source: item.source,
           presetCode: item.presetCode,
           userText: item.userText,
+          model: item.model,
           durationMs: item.durationMs,
           error: item.error,
           variantsCount: (item.variants || []).length,
           deletedAt: item.deletedAt,
-          user: item.userId && userMap.get(String(item.userId))
+          user: item.source === 'stand'
+            ? { firstName: 'Стенд', tgId: null, username: null }
+            : item.userId && userMap.get(String(item.userId))
             ? {
               tgId: userMap.get(String(item.userId)).tgId,
               firstName: userMap.get(String(item.userId)).firstName,
@@ -203,6 +209,76 @@ const createApp = ({
       res.status(500).json({ error: 'internal' });
     }
   });
+
+  // Тестовый стенд: ручной запрос в BFL, та же запись в журнале, что у бота.
+  app.get('/api/stand', requireInternalKey, (_req, res) => {
+    res.json(catalog(config ? config.bflModel : 'flux-2-pro'));
+  });
+
+  app.post(
+    '/api/stand',
+    requireInternalKey,
+    express.raw({ type: 'multipart/form-data', limit: '12mb' }),
+    async (req, res) => {
+      if (!bflProvider) {
+        return res.status(503).json({ error: 'Стенд доступен, когда у бота GENERATION_PROVIDER=bfl' });
+      }
+      let parsed;
+      try {
+        parsed = parseMultipart(req.body, req.header('content-type'));
+      } catch (error) {
+        logger.error({ err: error.message }, 'stand multipart failed');
+        return res.status(400).json({ error: 'Не разобрать форму загрузки' });
+      }
+      const built = parseStandRequest(parsed.fields, parsed.file);
+      if (built.error) return res.status(400).json({ error: built.error });
+
+      const started = Date.now();
+      const remember = async (result, error) => {
+        try {
+          await journalStand({
+            models,
+            storage,
+            built: built.value,
+            result,
+            error,
+            started,
+            day: moscowDayKey(),
+          });
+        } catch (journalError) {
+          logger.error({ err: journalError.message }, 'stand journal failed');
+        }
+      };
+      try {
+        const result = await bflProvider.generate({
+          ...built.value,
+          signal: AbortSignal.timeout(180000),
+        });
+        await remember(result, null);
+        return res.json({
+          model: result.model,
+          modelTitle: built.value.modelTitle,
+          elapsedMs: Date.now() - started,
+          estimateUsd: built.value.estimateUsd,
+          request: result.request,
+          form: built.value.form,
+          images: result.images.map((image) => ({
+            mime: built.value.form.outputFormat === 'png' ? 'image/png' : 'image/jpeg',
+            width: image.width,
+            height: image.height,
+            base64: image.buffer.toString('base64'),
+          })),
+        });
+      } catch (error) {
+        logger.error({ err: error.message }, 'stand generation failed');
+        await remember(null, error);
+        return res.status(502).json({
+          error: error.message || 'BFL не ответил',
+          form: built.value.form,
+        });
+      }
+    }
+  );
 
   // Файлы: исходник и варианты конкретного запроса (FR-A-060: только через бота)
   app.get('/files/:id', requireInternalKey, async (req, res) => {

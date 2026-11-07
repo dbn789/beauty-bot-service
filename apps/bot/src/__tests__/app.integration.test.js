@@ -199,3 +199,86 @@ describe('/files/:id (FR-A-060)', () => {
     expect((await authed('/files/000000000000000000000000?v=1')).status).toBe(404);
   });
 });
+
+describe('/api/stand', () => {
+  test('мета, генерация без записи в журнал, 503 без провайдера', async () => {
+    const meta = await authed('/api/stand');
+    expect(meta.status).toBe(200);
+    const catalog = await meta.json();
+    expect(catalog.models.some((model) => model.id === 'flux-2-max')).toBe(true);
+
+    const calls = [];
+    const photo = buildPng(640, 800, noise);
+    const app = createApp({
+      logger,
+      dbState: () => 'ok',
+      provider: 'bfl',
+      config: { internalApiKey: API_KEY, bflModel: 'flux-2-pro', variants: 3 },
+      models: { User, GenerationRequest },
+      storage,
+      bflProvider: {
+        async generate(input) {
+          calls.push(input);
+          return {
+            model: input.request.model,
+            request: { prompt: input.prompt, width: input.request.width, disable_pup: true },
+            images: [{ buffer: photo, width: input.request.width, height: input.request.height, providerTaskId: 't' }],
+          };
+        },
+      },
+    });
+    const srv = app.listen(0);
+    await new Promise((resolve) => srv.on('listening', resolve));
+    const origin = `http://127.0.0.1:${srv.address().port}`;
+    const url = `${origin}/api/stand`;
+    const before = await GenerationRequest.countDocuments();
+    const boundary = 'standb';
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\nflux-2-max\r\n`
+        + `--${boundary}\r\nContent-Disposition: form-data; name="variants"\r\n\r\n1\r\n`
+        + `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nkeep the face\r\n`
+        + `--${boundary}\r\nContent-Disposition: form-data; name="resolution"\r\n\r\n2mp\r\n`
+        + `--${boundary}\r\nContent-Disposition: form-data; name="keepPrompt"\r\n\r\n1\r\n`
+        + `--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="p.png"\r\nContent-Type: image/png\r\n\r\n`
+      ),
+      photo,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.model).toBe('flux-2-max');
+    expect(json.images).toHaveLength(1);
+    expect(calls[0].request.fields.disable_pup).toBe(true);
+    expect(await GenerationRequest.countDocuments()).toBe(before + 1);
+    const saved = await GenerationRequest.findOne({ source: 'stand' }).lean();
+    expect(saved.status).toBe('done');
+    expect(saved.model).toBe('flux-2-max');
+    expect(saved.userId).toBeNull();
+    expect(saved.finalPrompt).toBe('keep the face');
+    expect(saved.variants).toHaveLength(1);
+
+    const journal = await (await fetch(`${origin}/api/generations`, {
+      headers: { 'x-api-key': API_KEY },
+    })).json();
+    const row = journal.items.find((item) => item.source === 'stand');
+    expect(row.user.firstName).toBe('Стенд');
+    expect(row.model).toBe('flux-2-max');
+    expect((await fetch(`${origin}/files/${saved._id}?kind=source`, {
+      headers: { 'x-api-key': API_KEY },
+    })).status).toBe(200);
+
+    const closed = await fetch(`${baseUrl}/api/stand`, {
+      method: 'POST',
+      headers: { 'x-api-key': API_KEY, 'content-type': 'multipart/form-data; boundary=x' },
+      body: Buffer.from('--x--\r\n'),
+    });
+    expect(closed.status).toBe(503);
+    await new Promise((resolve) => srv.close(resolve));
+  });
+});

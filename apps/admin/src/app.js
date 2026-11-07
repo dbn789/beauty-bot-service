@@ -152,6 +152,31 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
     res.render('dashboard', { title: 'Дашборд', days, stats, botError });
   });
 
+  // ── тестовый стенд: ручной запрос в BFL ───────────────────────────────────
+  const renderStand = async (res, { result = null, error = null, form = null } = {}) => {
+    let meta = null;
+    let botError = null;
+    try {
+      meta = await bot.standMeta();
+    } catch (err) {
+      botError = err.message;
+    }
+    res.render('stand', {
+      title: 'Тестовый стенд', meta, botError, result, error, form,
+    });
+  };
+
+  app.get('/stand', (req, res) => renderStand(res));
+
+  app.post('/stand', express.raw({ type: 'multipart/form-data', limit: '12mb' }), async (req, res) => {
+    try {
+      const result = await bot.stand(req.body, req.header('content-type'));
+      return renderStand(res, { result, form: result.form });
+    } catch (error) {
+      return renderStand(res, { error: error.message, form: error.form || null });
+    }
+  });
+
   // ── журнал генераций (FR-A-040) ───────────────────────────────────────────
   app.get('/generations', async (req, res) => {
     const { status = '', from = '', to = '' } = req.query;
@@ -326,7 +351,10 @@ const createAdminApp = ({ session, bot, models, config, logger, deployer = null,
   app.use((req, res) => res.status(404).render('error', { title: 'Не найдено', message: `Страница ${req.path} не найдена` }));
   app.use((err, _req, res, _next) => {
     logger.error({ err: err.message }, 'admin error');
-    res.status(500).render('error', { title: 'Ошибка', message: 'Внутренняя ошибка сервера' });
+    if (err.type === 'entity.too.large') {
+      return res.status(413).render('error', { title: 'Файл слишком большой', message: 'Фото больше 10 МБ' });
+    }
+    return res.status(500).render('error', { title: 'Ошибка', message: 'Внутренняя ошибка сервера' });
   });
 
   return app;

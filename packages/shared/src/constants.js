@@ -7,10 +7,11 @@ const REQUEST_STATUS = Object.freeze({
   BUDGET_STOPPED: 'budget_stopped',
 });
 
-// Источник запроса: пресет из каталога или свободный текст
+// Источник запроса: пресет из каталога, свободный текст или тестовый стенд
 const REQUEST_SOURCE = Object.freeze({
   PRESET: 'preset',
   FREE_TEXT: 'free_text',
+  STAND: 'stand',
 });
 
 // Шаги диалога клиента (ТЗ 8.1, users.dialogState)

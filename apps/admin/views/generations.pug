@@ -36,13 +36,16 @@ block content
             td= new Date(item.createdAt).toLocaleString('ru-RU')
             td
               if item.user
-                = (item.user.firstName || item.user.username || '') + ' '
-                span.muted= item.user.tgId
+                = item.user.firstName || item.user.username || ''
+                if item.user.tgId
+                  span.muted= ' ' + item.user.tgId
               else
                 span.muted —
             td
               if item.source === 'preset'
                 = presetTitles[item.presetCode] || item.presetCode
+              else if item.source === 'stand'
+                span(title=item.userText) Стенд · #{item.model || 'bfl'}
               else
                 span(title=item.userText) Свой текст
             td

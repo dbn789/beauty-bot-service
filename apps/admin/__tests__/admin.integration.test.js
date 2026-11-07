@@ -33,17 +33,48 @@ const fakeBot = {
   },
   async generations() {
     return {
-      total: 1, page: 1, limit: 20, pages: 1,
+      total: 2, page: 1, limit: 20, pages: 1,
       items: [{
         id: '507f1f77bcf86cd799439011', createdAt: new Date(), day: '2026-10-12',
         status: 'done', source: 'preset', presetCode: 'bob_classic', userText: null,
         durationMs: 25000, error: null, variantsCount: 3, deletedAt: null,
         user: { tgId: 12345, firstName: 'Тест', username: null },
+      }, {
+        id: '507f1f77bcf86cd799439012', createdAt: new Date(), day: '2026-10-12',
+        status: 'done', source: 'stand', model: 'flux-2-max', presetCode: null,
+        userText: 'keep the face', durationMs: 1200, error: null, variantsCount: 1,
+        deletedAt: null,
+        user: { firstName: 'Стенд', tgId: null, username: null },
       }],
     };
   },
   async file() {
     throw new Error('bot api /files: http 404');
+  },
+  async standMeta() {
+    return {
+      currentModel: 'flux-2-pro',
+      variants: 3,
+      defaultPrompt: 'Edit the hairstyle: каре. Keep the face.',
+      models: [
+        { id: 'flux-2-pro', title: 'FLUX.2 [pro]', note: 'модель бота', priceUsd: 0.045, controls: ['disablePup'] },
+        { id: 'flux-2-flex', title: 'FLUX.2 [flex]', note: 'guidance', priceUsd: 0.06, controls: ['guidance', 'steps', 'promptUpsampling'] },
+      ],
+      resolutions: [
+        { id: 'cap1', title: 'около 1.1 МП', megapixels: 1.1 },
+        { id: '2mp', title: '2 МП', megapixels: 2 },
+      ],
+    };
+  },
+  async stand() {
+    return {
+      model: 'flux-2-pro',
+      elapsedMs: 1200,
+      estimateUsd: 0.09,
+      request: { prompt: 'keep', width: 800, height: 1000, disable_pup: true },
+      form: { model: 'flux-2-pro', variants: 1, prompt: 'keep', resolution: '2mp', keepPrompt: true },
+      images: [{ mime: 'image/png', width: 8, height: 8, base64: 'aGk=' }],
+    };
   },
 };
 
@@ -116,6 +147,21 @@ describe('auth-wall (FR-A-010/020)', () => {
 describe('страницы под сессией', () => {
   const authed = (p, opts = {}) => fetch(`${baseUrl}${p}`, { headers: { cookie }, ...opts });
 
+  test('тестовый стенд стоит в меню и показывает модели BFL', async () => {
+    const html = await (await authed('/stand')).text();
+    expect(html.includes('Тестовый стенд')).toBe(true);
+    expect(html.includes('flux-2-pro')).toBe(true);
+    expect(html.includes('flux-2-flex')).toBe(true);
+    expect(html.includes('Не давать модели переписывать текст')).toBe(true);
+    expect(html.includes('guidance')).toBe(true);
+
+    const dash = await (await authed('/dashboard')).text();
+    const standAt = dash.indexOf('Тестовый стенд');
+    const genAt = dash.indexOf('Генерации');
+    expect(standAt).toBeGreaterThan(-1);
+    expect(standAt).toBeLessThan(genAt);
+  });
+
   test('дашборд рендерится с данными бота (FR-A-030)', async () => {
     const response = await authed('/dashboard?days=7');
     expect(response.status).toBe(200);
@@ -131,6 +177,7 @@ describe('страницы под сессией', () => {
     const html = await response.text();
     expect(html.includes('done')).toBe(true);
     expect(html.includes('/preview/507f1f77bcf86cd799439011')).toBe(true);
+    expect(html.includes('Стенд · flux-2-max')).toBe(true);
   });
 
   test('пользователи из общей БД (FR-A-050)', async () => {

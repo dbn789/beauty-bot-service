@@ -168,6 +168,7 @@ ul.planned li { margin: 4px 0; }
 .notes-form select {
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff;
 }
+.notes-form input[type="checkbox"] { width: auto; padding: 0; }
 .notes-form textarea { resize: vertical; }
 .row-form { display: inline; margin: 0; }
 .row-form button {
@@ -178,6 +179,14 @@ ul.planned li { margin: 4px 0; }
   align-self: flex-start; padding: 8px 18px; border: 0; border-radius: 8px;
   background: var(--accent); color: #fff; cursor: pointer;
 }
+.stand-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 20px; }
+.stand-grid figure { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.stand-grid img { width: 100%; display: block; }
+.stand-grid figcaption { padding: 8px 10px; color: var(--muted); font-size: 13px; }
+.stand-echo { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; }
+.stand-echo dt { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.stand-echo dd { margin: 2px 0 0; word-break: break-word; }
+.checkline { display: flex; gap: 8px; align-items: center; }
 .notes-form button:hover { background: var(--accent-dark); }
 .ok { color: var(--ok); margin: 0 0 8px; }
 

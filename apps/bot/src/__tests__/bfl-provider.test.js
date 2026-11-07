@@ -109,6 +109,40 @@ describe('BflProvider: happy path', () => {
     // размеры выхода прокинуты, кратны 32 (кап цены за мегапиксель)
     expect(harness.submitted[0].width % 32).toBe(0);
     expect(harness.submitted[0].height % 32).toBe(0);
+    // боевой вызов не шлёт ручки стенда
+    expect(harness.submitted[0].disable_pup).toBeUndefined();
+  });
+
+  test('стенд подменяет модель, размер и доп. поля схемы', async () => {
+    const urls = [];
+    const fetchImpl = async (url, init = {}) => {
+      urls.push(url);
+      if (init.method === 'POST') return jsonResponse(200, { id: 't', polling_url: `${BASE}/get_result?id=1` });
+      if (url.startsWith(`${BASE}/get_result`)) return jsonResponse(200, { status: 'Ready', id: 't', result: { sample: 'https://delivery.bfl.ai/x.png' } });
+      return binaryResponse(png);
+    };
+    const result = await makeProvider(fetchImpl).generate({
+      imageBuffer: png,
+      prompt: 'keep the face',
+      variants: 1,
+      request: {
+        model: 'flux-2-max',
+        width: 832,
+        height: 1216,
+        fields: { disable_pup: true, safety_tolerance: 2, output_format: 'png', seed: 7 },
+      },
+    });
+    expect(urls[0]).toBe(`${BASE}/flux-2-max`);
+    expect(result.model).toBe('flux-2-max');
+    expect(result.request).toEqual({
+      prompt: 'keep the face',
+      width: 832,
+      height: 1216,
+      disable_pup: true,
+      safety_tolerance: 2,
+      output_format: 'png',
+      seed: 7,
+    });
   });
 
   test('x-key прокидывается в заголовки', async () => {
