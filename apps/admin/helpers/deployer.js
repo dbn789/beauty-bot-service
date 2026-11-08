@@ -63,11 +63,26 @@ const createDeployer = ({ config, logger, spawnImpl, prepareImpl } = {}) => {
     state.running = true;
     const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'beauty-deploy-'));
     const askpass = path.join(tmp, 'askpass.sh');
-    await fs.promises.writeFile(askpass, '#!/bin/sh\necho "$DEPLOY_PASSWORD"\n', { mode: 0o700 });
+    // Alpine git (контейнер админки) после редиректа на URL со слешем
+    // забывает логин из адреса и спрашивает его отдельно. Ответ паролем
+    // на оба вопроса даёт Authentication failed при верном пароле.
+    await fs.promises.writeFile(
+      askpass,
+      [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  Username*) printf \'%s\\n\' "$DEPLOY_LOGIN" ;;',
+        '  *) printf \'%s\\n\' "$DEPLOY_PASSWORD" ;;',
+        'esac',
+        '',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
     const gitEnv = {
       ...process.env,
       GIT_ASKPASS: askpass,
       GIT_TERMINAL_PROMPT: '0',
+      DEPLOY_LOGIN: config.deployLogin,
       DEPLOY_PASSWORD: config.deployPassword,
     };
 

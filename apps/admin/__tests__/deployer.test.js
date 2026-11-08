@@ -1,11 +1,16 @@
 // Юнит-тесты деплоера без git и сети: фейковый spawn.
 const { EventEmitter } = require('events');
+const fs = require('fs');
 const { createDeployer } = require('../helpers/deployer');
 
 // эмулятор child_process.spawn: пишет команды в лог, exit 0 или код по сценарию
 const makeSpawn = ({ failOn = null } = {}) => {
   const calls = [];
+  const found = { askpass: '' };
   const spawnImpl = (cmd, args, options) => {
+    if (options && options.env && options.env.GIT_ASKPASS && !found.askpass) {
+      found.askpass = fs.readFileSync(options.env.GIT_ASKPASS, 'utf8');
+    }
     calls.push({ cmd, args, options });
     const child = new EventEmitter();
     child.stderr = new EventEmitter();
@@ -19,7 +24,7 @@ const makeSpawn = ({ failOn = null } = {}) => {
     });
     return child;
   };
-  return { calls, spawnImpl };
+  return { calls, spawnImpl, found };
 };
 
 const baseConfig = {
@@ -66,9 +71,12 @@ describe('createDeployer', () => {
     expect(pushes[1].args[2]).toBe('https://user@git.example.ru/u/beauty-admin');
 
     const env = harness.calls[0].options.env;
+    expect(env.DEPLOY_LOGIN).toBe('user');
     expect(env.DEPLOY_PASSWORD).toBe('pass');
     expect(env.GIT_TERMINAL_PROMPT).toBe('0');
     expect(String(env.GIT_ASKPASS)).toContain('askpass.sh');
+    expect(harness.found.askpass).toContain('Username*)');
+    expect(harness.found.askpass).toContain('DEPLOY_LOGIN');
 
     const commitArgs = harness.calls.find((c) => c.args.includes('commit')).args.join(' ');
     expect(commitArgs).toContain('chore: amvera deploy config (bot)');
