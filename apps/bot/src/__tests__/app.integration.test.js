@@ -221,7 +221,12 @@ describe('/api/stand', () => {
           calls.push(input);
           return {
             model: input.request.model,
-            request: { prompt: input.prompt, width: input.request.width, disable_pup: true },
+            request: {
+              prompt: input.prompt,
+              width: input.request.width,
+              height: input.request.height,
+              ...input.request.fields,
+            },
             images: [{ buffer: photo, width: input.request.width, height: input.request.height, providerTaskId: 't' }],
           };
         },
@@ -262,6 +267,13 @@ describe('/api/stand', () => {
     expect(saved.userId).toBeNull();
     expect(saved.finalPrompt).toBe('keep the face');
     expect(saved.variants).toHaveLength(1);
+    expect(saved.bflRequest.model).toBe('flux-2-max');
+    expect(saved.bflRequest.prompt).toBe('keep the face');
+    expect(saved.bflRequest.resolution).toBe('2mp');
+    expect(saved.bflRequest.disable_pup).toBe(true);
+    expect(saved.bflRequest.output_format).toBe('jpeg');
+    expect(saved.bflRequest.width).toBeGreaterThan(0);
+    expect(saved.bflRequest).not.toHaveProperty('input_image');
 
     const journal = await (await fetch(`${origin}/api/generations`, {
       headers: { 'x-api-key': API_KEY },
@@ -269,6 +281,8 @@ describe('/api/stand', () => {
     const row = journal.items.find((item) => item.source === 'stand');
     expect(row.user.firstName).toBe('Стенд');
     expect(row.model).toBe('flux-2-max');
+    expect(row.finalPrompt).toBe('keep the face');
+    expect(row.bflRequest.disable_pup).toBe(true);
     expect((await fetch(`${origin}/files/${saved._id}?kind=source`, {
       headers: { 'x-api-key': API_KEY },
     })).status).toBe(200);

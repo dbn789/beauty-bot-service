@@ -138,6 +138,21 @@ const parseStandRequest = (fields, file) => {
   };
 };
 
+// То, что реально ушло в BFL, без input_image. На ошибке — то, что собирались отправить.
+const standBflRecord = (built, result) => {
+  const sent = (result && result.request) || {
+    prompt: built.prompt,
+    ...(built.request.width ? { width: built.request.width, height: built.request.height } : {}),
+    ...(built.request.fields || {}),
+  };
+  return {
+    model: (result && result.model) || built.request.model,
+    variants: built.variants,
+    resolution: built.form.resolution,
+    ...sent,
+  };
+};
+
 // Та же коллекция, что у бота: журнал, превью и ретеншн подхватывают запись сами.
 const journalStand = async ({ models, storage, built, result, error, started, day }) => {
   const doc = await models.GenerationRequest.create({
@@ -154,6 +169,7 @@ const journalStand = async ({ models, storage, built, result, error, started, da
     },
     provider: 'bfl',
     model: built.request.model,
+    bflRequest: standBflRecord(built, null),
     day,
   });
   const ext = built.mime === 'image/png' ? 'png' : 'jpg';
@@ -190,6 +206,7 @@ const journalStand = async ({ models, storage, built, result, error, started, da
       retried: false,
     };
   }
+  if (result && result.request) doc.bflRequest = standBflRecord(built, result);
   doc.durationMs = Date.now() - started;
   await doc.save();
   return doc;

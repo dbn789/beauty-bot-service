@@ -17,6 +17,7 @@ const createRetention = ({ models, storage, config, logger }) => {
     'sourcePhoto.tgFileId': null,
     userText: null,
     finalPrompt: '—',
+    bflRequest: null,
   };
 
   const markDeleted = (requestId, now) =>

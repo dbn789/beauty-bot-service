@@ -197,5 +197,46 @@ ul.planned li { margin: 4px 0; }
 }
 button.deploy-btn:disabled { opacity: 0.6; cursor: wait; }
 
+.icon-btn {
+  margin-left: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--accent-dark);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.prompt-modal {
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  width: min(640px, calc(100% - 32px));
+  color: var(--ink);
+}
+.prompt-modal::backdrop { background: rgba(43, 38, 34, 0.45); }
+.prompt-modal form { padding: 18px 20px 16px; max-width: 100%; }
+.prompt-modal h2 { margin-top: 0; }
+.prompt-modal pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 14px;
+  background: #faf7f4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0 0 12px;
+  max-height: 40vh;
+  overflow: auto;
+}
+.prompt-modal dl { margin: 0 0 16px; }
+.prompt-modal dt { color: var(--muted); font-size: 13px; margin-top: 8px; }
+.prompt-modal dd { margin: 0; overflow-wrap: break-word; }
+.prompt-modal button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+
 /* ── о сервисе ── */
 .table.about td:first-child { color: var(--muted); width: 40%; }

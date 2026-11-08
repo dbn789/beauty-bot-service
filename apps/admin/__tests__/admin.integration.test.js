@@ -42,7 +42,12 @@ const fakeBot = {
       }, {
         id: '507f1f77bcf86cd799439012', createdAt: new Date(), day: '2026-10-12',
         status: 'done', source: 'stand', model: 'flux-2-max', presetCode: null,
-        userText: 'keep the face', durationMs: 1200, error: null, variantsCount: 1,
+        userText: 'keep the face', finalPrompt: 'keep the face', durationMs: 1200,
+        error: null, variantsCount: 1,
+        bflRequest: {
+          model: 'flux-2-max', prompt: 'keep the face', resolution: '2mp',
+          width: 1024, height: 1024, disable_pup: true, output_format: 'jpeg', safety_tolerance: 2,
+        },
         deletedAt: null,
         user: { firstName: 'Стенд', tgId: null, username: null },
       }],
@@ -178,6 +183,10 @@ describe('страницы под сессией', () => {
     expect(html.includes('done')).toBe(true);
     expect(html.includes('/preview/507f1f77bcf86cd799439011')).toBe(true);
     expect(html.includes('Стенд · flux-2-max')).toBe(true);
+    expect(html.includes('data-open-prompt')).toBe(true);
+    expect(html.includes('id="prompt-modal"')).toBe(true);
+    expect(html.includes('keep the face')).toBe(true);
+    expect(html.includes('&quot;disable_pup&quot;:true') || html.includes('"disable_pup":true')).toBe(true);
   });
 
   test('пользователи из общей БД (FR-A-050)', async () => {

@@ -39,6 +39,8 @@ const generationRequestSchema = new mongoose.Schema({
   variants: { type: [variantSchema], default: [] },
   provider: { type: String, default: null },
   model: { type: String, default: null },
+  // Тело запроса к BFL без картинки: промпт, размер и все поля схемы. У бота null.
+  bflRequest: { type: mongoose.Schema.Types.Mixed, default: null },
   durationMs: { type: Number, default: null },
   error: {
     type: {

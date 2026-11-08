@@ -42,12 +42,18 @@ block content
               else
                 span.muted —
             td
+              - const promptText = (item.finalPrompt && item.finalPrompt !== '—') ? item.finalPrompt : (item.userText || '')
               if item.source === 'preset'
                 = presetTitles[item.presetCode] || item.presetCode
               else if item.source === 'stand'
-                span(title=item.userText) Стенд · #{item.model || 'bfl'}
+                span Стенд · #{item.model || 'bfl'}
               else
-                span(title=item.userText) Свой текст
+                span Свой текст
+              if promptText || item.bflRequest
+                button.icon-btn(type="button" title="Промпт и параметры запроса" aria-label="Промпт и параметры запроса" data-open-prompt data-prompt=promptText data-request=(item.bflRequest ? JSON.stringify(item.bflRequest) : ''))
+                  svg(viewBox="0 0 24 24" width="16" height="16" aria-hidden="true")
+                    path(fill="none" stroke="currentColor" stroke-width="2" d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z")
+                    circle(cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2")
             td
               span.badge(class=item.status)= item.status
             td= item.variantsCount
@@ -70,3 +76,58 @@ block content
       span стр. #{data.page} из #{data.pages}
       if page < data.pages
         a(href=`/generations?${queryString(Object.assign({}, filters, { page: page + 1 }))}`) вперед ›
+
+    dialog#prompt-modal.prompt-modal
+      form(method="dialog")
+        h2 Запрос к BFL
+        pre#prompt-text
+        dl#prompt-params
+        button(type="submit") Закрыть
+
+    script.
+      (function () {
+        var dialog = document.getElementById('prompt-modal');
+        if (!dialog) return;
+        var labels = {
+          model: 'Модель',
+          resolution: 'Разрешение',
+          variants: 'Число картинок',
+          width: 'Ширина',
+          height: 'Высота',
+          output_format: 'Формат',
+          safety_tolerance: 'safety_tolerance',
+          seed: 'Seed',
+          disable_pup: 'Не переписывать промпт',
+          prompt_upsampling: 'Переписывание промпта',
+          guidance: 'Guidance',
+          steps: 'Steps'
+        };
+        var order = Object.keys(labels);
+        function show(value) {
+          if (value === true) return 'да';
+          if (value === false) return 'нет';
+          return String(value);
+        }
+        document.querySelectorAll('[data-open-prompt]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            document.getElementById('prompt-text').textContent = btn.getAttribute('data-prompt') || '—';
+            var data = {};
+            try { data = JSON.parse(btn.getAttribute('data-request') || '{}'); } catch (e) { data = {}; }
+            var keys = order.filter(function (key) { return data[key] != null && data[key] !== ''; });
+            Object.keys(data).forEach(function (key) {
+              if (key !== 'prompt' && keys.indexOf(key) === -1 && data[key] != null && data[key] !== '') keys.push(key);
+            });
+            var dl = document.getElementById('prompt-params');
+            dl.textContent = '';
+            keys.forEach(function (key) {
+              var dt = document.createElement('dt');
+              dt.textContent = labels[key] || key;
+              var dd = document.createElement('dd');
+              dd.textContent = show(data[key]);
+              dl.appendChild(dt);
+              dl.appendChild(dd);
+            });
+            dialog.showModal();
+          });
+        });
+      }());
